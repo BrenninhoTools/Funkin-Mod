@@ -34,12 +34,103 @@
     return m ? m[1].toLowerCase() : '';
   };
 
-  /** Strips the BOM and parses JSON; the error message names the offending file. */
+  /**
+   * Lenient JSON parser. Psych Engine reads mod JSON with a forgiving parser (tjson), so real-world mods contain
+   * comments, trailing commas, missing commas between members, single-quoted strings and unquoted keys.
+   */
+  function lenientParse(src) {
+    let i = 0;
+    const n = src.length;
+    const fail = (msg) => {
+      const before = src.slice(0, i);
+      const line = before.split('\n').length;
+      throw new Error(msg + ' (line ' + line + ', column ' + (i - before.lastIndexOf('\n')) + ')');
+    };
+    function ws() {
+      for (;;) {
+        while (i < n && /\s/.test(src[i])) i++;
+        if (src[i] === '/' && src[i + 1] === '/') { while (i < n && src[i] !== '\n') i++; }
+        else if (src[i] === '/' && src[i + 1] === '*') { const e = src.indexOf('*/', i + 2); i = e < 0 ? n : e + 2; }
+        else return;
+      }
+    }
+    function str() {
+      const q = src[i++];
+      let out = '';
+      while (i < n && src[i] !== q) {
+        if (src[i] === '\\') {
+          i++;
+          const c = src[i++];
+          const map = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', '/': '/', '\\': '\\', '"': '"', "'": "'" };
+          if (c === 'u') { out += String.fromCharCode(parseInt(src.substr(i, 4), 16)); i += 4; }
+          else out += map[c] !== undefined ? map[c] : c;
+        } else out += src[i++];
+      }
+      if (i >= n) fail('Unterminated string');
+      i++;
+      return out;
+    }
+    function key() {
+      if (src[i] === '"' || src[i] === "'") return str();
+      const m = /^[A-Za-z0-9_$.-]+/.exec(src.slice(i, i + 200));
+      if (!m) fail('Expected a property name');
+      i += m[0].length;
+      return m[0];
+    }
+    function value() {
+      ws();
+      const c = src[i];
+      if (c === '{') {
+        i++;
+        const o = {};
+        for (;;) {
+          ws();
+          while (src[i] === ',') { i++; ws(); }
+          if (src[i] === '}') { i++; return o; }
+          if (i >= n) fail('Unterminated object');
+          const k = key();
+          ws();
+          if (src[i] !== ':' && src[i] !== '=') fail('Expected ":" after property name');
+          i++;
+          o[k] = value();
+        }
+      }
+      if (c === '[') {
+        i++;
+        const a = [];
+        for (;;) {
+          ws();
+          while (src[i] === ',') { i++; ws(); }
+          if (src[i] === ']') { i++; return a; }
+          if (i >= n) fail('Unterminated array');
+          a.push(value());
+        }
+      }
+      if (c === '"' || c === "'") return str();
+      const m = /^(-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?|true|false|null|NaN|-?Infinity)/.exec(src.slice(i, i + 64));
+      if (!m) fail('Unexpected character "' + (c || 'end of file') + '"');
+      i += m[0].length;
+      const t = m[0];
+      return t === 'true' ? true : t === 'false' ? false : t === 'null' ? null : Number(t);
+    }
+    const v = value();
+    ws();
+    if (i < n) fail('Unexpected content after the JSON value');
+    return v;
+  }
+  C.lenientParse = lenientParse;
+
+  /** Strips the BOM and parses JSON (strict first, then leniently); the error message names the offending file. */
   C.parseJson = function (text, label) {
+    const src = String(text).replace(/^﻿/, '');
     try {
-      return JSON.parse(String(text).replace(/^﻿/, ''));
+      return JSON.parse(src);
     } catch (e) {
-      throw new Error('Invalid JSON in ' + label + ': ' + e.message);
+      try {
+        return lenientParse(src);
+      } catch (e2) {
+        throw new Error('Invalid JSON in ' + label + ': ' + e.message);
+      }
     }
   };
 

@@ -151,6 +151,11 @@ function buildFakeMod() {
   z.file(R + 'custom_events/Screen Shake.lua', "function onEvent(name, value1, value2)\n  cameraShake('game', tonumber(value1) or 0.05, 0.2)\nend\n");
   z.file(R + 'custom_events/Screen Shake.txt', 'Shakes the screen');
   z.file(R + 'custom_notetypes/Hurt Note.lua', "function goodNoteHit(id, direction, noteType, isSustainNote)\n  setHealth(getHealth() - 0.4)\nend\n");
+  // Real-world Psych JSON is sloppy: comments, a missing comma, trailing commas.
+  z.file(R + 'stages/lenient.json', '{\n  // a comment\n  "defaultZoom": 0.7,\n  "boyfriend": [770, 100]\n  "girlfriend": [400, 130],\n  "opponent": [100, 100,],\n}\n');
+  // Audio in a differently-cased folder and in mp3 format.
+  z.file(R + 'data/odd-song/odd-song.json', JSON.stringify({ song: { song: 'Odd Song', bpm: 100, speed: 1, player1: 'bf', player2: 'dad', stage: 'stage', notes: [{ mustHitSection: true, sectionNotes: [[0, 0, 0]] }] } }));
+  z.file(R + 'songs/Odd-Song/Inst.mp3', OGG);
   z.file(R + 'scripts/broken.lua', 'function onCreate(\n');
   z.file(R + 'shaders/blur.frag', 'void main(){}');
   z.file(R + 'music/menu.ogg', OGG);
@@ -166,7 +171,7 @@ async function run(t) {
   assert.deepStrictEqual(mods.map((m) => m.prefix), ['cool-mod/']);
   const scan = await C.scanMod(zip, mods[0]);
   assert.strictEqual(scan.engine, 'psych');
-  assert.deepStrictEqual(scan.songs.sort(), ['lonely', 'test-song']);
+  assert.deepStrictEqual(scan.songs.sort(), ['lonely', 'odd-song', 'test-song']);
   assert.deepStrictEqual(scan.characters.sort(), ['cool-bf', 'cool-dad']);
   assert.strictEqual(scan.pack.name, 'Cool Mod');
 
@@ -233,7 +238,7 @@ async function run(t) {
   assert.strictEqual(lm.playData.characters.playerVocals, undefined);
   assert(re.file(M + 'songs/lonely/Voices.ogg'));
   const extras = await readJson(re, M + 'data/levels/cool-mod-extras.json');
-  assert.deepStrictEqual(extras.songs, ['lonely']);
+  assert.deepStrictEqual(extras.songs, ['lonely', 'odd-song']);
   assert.strictEqual(extras.visible, false);
 
   // --- characters
@@ -297,6 +302,21 @@ async function run(t) {
   assert(/class CoolModHurtNoteNoteKind extends NoteKind/.test(nk));
   assert(/super\("Hurt Note"/.test(nk));
   assert(!re.file(M + 'scripts/foo.lua') && !re.file(M + 'scripts/global.lua'), 'Lua sources are not copied');
+
+  // --- tolerant JSON and unusual audio locations
+  const lenient = await readJson(re, M + 'data/stages/lenient.json');
+  assert.strictEqual(lenient.cameraZoom, 0.7);
+  assert(re.file(M + 'songs/odd-song/Inst.mp3'), 'audio found in a differently-cased folder, kept as mp3');
+  assert(res.report.warnings.some((w) => /Inst\.mp3.*only reads \.ogg/.test(w)));
+  assert(C.lenientParse('{a: 1, \'b\': [1, 2,], /* c */ "d": "x" "e": true,}').e === true);
+
+  // --- missing audio: the error says what was found instead
+  const ghost = new JSZip();
+  ghost.file('g/pack.json', '{"name":"G"}');
+  ghost.file('g/data/ghost/ghost.json', JSON.stringify({ song: { song: 'Ghost', bpm: 100, speed: 1, player1: 'bf', player2: 'dad', notes: [] } }));
+  ghost.file('g/songs/Other/Inst.ogg', OGG);
+  const gres = await C.convertMod(ghost, C.detectMods(ghost, 'g.zip')[0], { JSZip, convertScripts: false });
+  assert(gres.report.errors.some((e) => /missing Inst\.ogg.*songs\/ghost\/ does not exist.*Other/.test(e)), gres.report.errors.join(' | '));
 
   // --- copies and report
   assert(re.file(M + 'music/menu.ogg'));

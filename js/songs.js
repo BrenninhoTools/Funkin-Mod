@@ -289,6 +289,25 @@
     return charts;
   }
 
+  /** Finds the folder holding a song's audio, tolerating different case and spaces/hyphens ("Trick Or Treat" vs "trick-or-treat"). */
+  function findAudioDir(fs, folder, id) {
+    const has = (dir) => fs.list(dir).length > 0;
+    for (const c of ['songs/' + folder, 'songs/' + id]) {
+      const real = fs.list(c)[0];
+      if (real) return real.split('/').slice(0, 2).join('/');
+    }
+    const dirs = new Set(fs.list('songs').map((p) => p.split('/')[1]).filter((d) => d && fs.list('songs/' + d).length));
+    for (const d of dirs) if (C.formatToSongPath(d) === id || d.toLowerCase() === folder.toLowerCase()) return has('songs/' + d) ? 'songs/' + d : null;
+    return null;
+  }
+
+  function describeAudioDir(fs, songDir, folder) {
+    const files = fs.list(songDir).map((p) => p.slice(songDir.length + 1));
+    if (files.length) return 'Found in ' + songDir + '/: ' + files.slice(0, 8).join(', ') + (files.length > 8 ? ', ...' : '') + '.';
+    const dirs = [...new Set(fs.list('songs').map((p) => p.split('/')[1]).filter(Boolean))];
+    return 'The folder songs/' + folder + '/ does not exist in this zip' + (dirs.length ? ' (songs/ has: ' + dirs.slice(0, 8).join(', ') + (dirs.length > 8 ? ', ...' : '') + ')' : ' (the zip has no songs/ folder at all, so the audio probably lives in the game\'s own mods/songs or was left out of the zip)') + '.';
+  }
+
   /**
    * Converts a whole song.
    * @param ctx {fs, out, report, modChars:Set, modStages:Map(id->{isPixel}), opts}
@@ -401,7 +420,7 @@
     }
 
     // Vocals: Voices.ogg is picked up by V-Slice's legacy fallback, so only the split tracks need metadata.
-    const songDir = 'songs/' + folder;
+    const songDir = findAudioDir(fs, folder, id) || 'songs/' + folder;
     const hasPlayerVoice = fs.exists(songDir + '/Voices-Player.ogg');
     const hasOppVoice = fs.exists(songDir + '/Voices-Opponent.ogg');
     const characters = { player, girlfriend, opponent, altInstrumentals: [] };
@@ -450,25 +469,27 @@
       }
       const lower = rel.toLowerCase();
       const ext = C.extOf(rel);
-      if (ext !== 'ogg') {
-        if (['mp3', 'wav', 'flac'].includes(ext)) report.warn('Audio "' + p + '" is not .ogg; desktop V-Slice only reads .ogg, so convert the file manually.');
+      if (!['ogg', 'mp3', 'wav', 'flac'].includes(ext)) {
         report.skip('Extra song files', p);
         continue;
       }
+      const stem = lower.slice(0, lower.length - ext.length - 1);
       let target = null;
-      if (lower === 'inst.ogg') {
-        target = 'Inst.ogg';
+      if (stem === 'inst') {
+        target = 'Inst.' + ext;
         hasInst = true;
-      } else if (lower === 'voices.ogg') target = 'Voices.ogg';
-      else if (lower === 'voices-player.ogg') target = 'Voices-' + player + '.ogg';
-      else if (lower === 'voices-opponent.ogg') target = 'Voices-' + opponent + '.ogg';
+      } else if (stem === 'voices') target = 'Voices.' + ext;
+      else if (stem === 'voices-player') target = 'Voices-' + player + '.' + ext;
+      else if (stem === 'voices-opponent') target = 'Voices-' + opponent + '.' + ext;
       else {
         report.skip('Extra song files', p);
         continue;
       }
+      // V-Slice on desktop only loads .ogg (web builds use .mp3). Keep the file anyway and say so.
+      if (ext !== 'ogg') report.warn('Audio "' + p + '" is .' + ext + ', but desktop V-Slice only reads .ogg: convert it to .ogg (same name) in songs/' + id + '/.');
       out.binary('songs/' + id + '/' + target, await fs.bytes(p));
     }
-    if (!hasInst) report.error('Song "' + id + '": missing songs/' + folder + '/Inst.ogg');
+    if (!hasInst) report.error('Song "' + id + '": missing Inst.ogg. ' + describeAudioDir(fs, songDir, folder));
 
     report.count('Songs converted');
     report.count('Difficulties converted', difficulties.length);
@@ -477,5 +498,5 @@
     return { id, name: metadata.songName, player, opponent, girlfriend, stage: stageOut, difficulties };
   }
 
-  C.songs = { listSongFolders, convertChart, mapTiming, convertSong, unwrapSong, listCharts };
+  C.songs = { listSongFolders, convertChart, mapTiming, convertSong, unwrapSong, listCharts, describeAudioDir };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -743,7 +743,7 @@
       }
       out.binary('songs/' + id + '/' + target, await fs.bytes(p));
     }
-    if (!hasInst) report.error('Song "' + id + '": missing ' + audio + '/Inst.ogg');
+    if (!hasInst) report.error('Song "' + id + '": missing ' + audio + '/Inst.ogg. ' + C.songs.describeAudioDir(fs, audio, folder));
 
     const metadata = {
       version: METADATA_VERSION,
