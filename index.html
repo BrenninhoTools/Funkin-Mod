@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FNF Mod Converter</title>
+  <meta name="description" content="Convert Psych Engine mods (.zip) to Friday Night Funkin' V-Slice mods, right in your browser.">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- Icon sprite -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0L7 9m5-5 5 5M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></symbol>
+      <symbol id="i-zip" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M6 3h8l4 4v14H6zM14 3v4h4M10 11h2m-2 3h2m-2 3h2"/></symbol>
+      <symbol id="i-music" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M9 18V6l11-2v12M9 18a3 3 0 1 1-3-3 3 3 0 0 1 3 3Zm11-2a3 3 0 1 1-3-3 3 3 0 0 1 3 3Z"/></symbol>
+      <symbol id="i-user" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8a7 7 0 0 1 14 0"/></symbol>
+      <symbol id="i-image" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M9 9.5h.01"/></symbol>
+      <symbol id="i-calendar" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 6h16v14H4zM4 10h16M8 3v4m8-4v4"/></symbol>
+      <symbol id="i-files" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 4h9l3 3v13H4zM8 4v0M16 7h-3V4M8 11h5m-5 3h5"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 4 2.5 20h19zM12 10v4m0 3h.01"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 4v12m0 0 5-5m-5 5-5-5M4 20h16"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0-13v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5Z"/></symbol>
+    </defs>
+  </svg>
+
+  <main class="wrap">
+    <header class="top">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">
+          <span class="k k1">&#8592;</span><span class="k k2">&#8595;</span><span class="k k3">&#8593;</span><span class="k k4">&#8594;</span>
+        </div>
+        <div>
+          <h1>FNF Mod Converter</h1>
+          <p class="tag">Psych Engine <span class="arrow" aria-hidden="true">&rarr;</span> <span class="sr">to</span> Funkin' V-Slice</p>
+        </div>
+      </div>
+      <button class="icon-btn" id="theme-toggle" type="button" aria-label="Toggle light/dark theme" title="Toggle theme">
+        <svg class="ico" id="theme-icon" aria-hidden="true"><use href="#i-moon"/></svg>
+      </button>
+    </header>
+
+    <ol class="steps" aria-label="Progress">
+      <li class="step active" id="st-1"><span class="dot">1</span><span class="lbl">Upload</span></li>
+      <li class="step" id="st-2"><span class="dot">2</span><span class="lbl">Configure</span></li>
+      <li class="step" id="st-3"><span class="dot">3</span><span class="lbl">Download</span></li>
+    </ol>
+
+    <!-- 1. Upload -->
+    <section class="card" id="card-upload" aria-labelledby="h-upload">
+      <h2 id="h-upload">Upload your mod</h2>
+      <p class="lead">Drop the <code>.zip</code> of a Psych Engine mod. Everything is converted locally in your browser; nothing is uploaded anywhere.</p>
+
+      <label class="drop" id="drop" tabindex="0">
+        <input type="file" id="file" accept=".zip,application/zip" hidden>
+        <svg class="ico big" aria-hidden="true"><use href="#i-upload"/></svg>
+        <span class="drop-title">Drag &amp; drop a .zip here, or <u>browse</u></span>
+        <span class="drop-hint">The mod can be at the zip root or inside a folder (e.g. <code>mods/my-mod/</code>).</span>
+      </label>
+
+      <div class="file-row" id="file-row" hidden>
+        <svg class="ico" aria-hidden="true"><use href="#i-zip"/></svg>
+        <div class="file-meta"><strong id="file-name"></strong><span id="file-size"></span></div>
+        <button class="btn ghost" id="btn-change" type="button">Change file</button>
+      </div>
+      <p class="notice err" id="load-error" role="alert" hidden></p>
+    </section>
+
+    <!-- 2. Configure -->
+    <section class="card" id="card-config" aria-labelledby="h-config" hidden>
+      <h2 id="h-config">Review &amp; configure</h2>
+
+      <div class="field" id="mod-pick-wrap" hidden>
+        <label for="mod-pick">Mod found in the zip</label>
+        <select id="mod-pick"></select>
+      </div>
+
+      <div class="tiles" id="tiles"></div>
+      <div class="notice warn" id="script-notice" hidden>
+        <svg class="ico" aria-hidden="true"><use href="#i-alert"/></svg>
+        <span id="script-notice-text"></span>
+      </div>
+      <details class="contents" id="contents" hidden>
+        <summary>What's inside</summary>
+        <div id="contents-body"></div>
+      </details>
+
+      <h3>Mod details</h3>
+      <div class="grid">
+        <div class="field">
+          <label for="opt-title">Mod name</label>
+          <input id="opt-title" type="text" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="opt-id">Output folder (ID)</label>
+          <input id="opt-id" type="text" autocomplete="off" spellcheck="false">
+          <small>Letters, numbers and dashes only.</small>
+        </div>
+        <div class="field">
+          <label for="opt-author">Author</label>
+          <input id="opt-author" type="text" autocomplete="off" placeholder="Unknown">
+        </div>
+        <div class="field">
+          <label for="opt-artist">Default song artist</label>
+          <input id="opt-artist" type="text" autocomplete="off" placeholder="Unknown">
+        </div>
+      </div>
+
+      <details class="adv">
+        <summary>Advanced</summary>
+        <div class="grid">
+          <div class="field">
+            <label for="opt-api">Polymod api_version</label>
+            <input id="opt-api" type="text" value="0.8.0" spellcheck="false">
+            <small>The current game accepts <code>&gt;=0.8.0 &lt;0.9.0</code>.</small>
+          </div>
+          <div class="field">
+            <label for="opt-charter">Charter (optional)</label>
+            <input id="opt-charter" type="text" autocomplete="off">
+          </div>
+        </div>
+        <label class="check"><input type="checkbox" id="opt-report" checked> Include <code>CONVERSION_REPORT.md</code> inside the zip</label>
+      </details>
+
+      <div class="actions">
+        <button class="btn primary lg" id="btn-convert" type="button">Convert mod</button>
+      </div>
+    </section>
+
+    <!-- 3. Result -->
+    <section class="card" id="card-result" aria-labelledby="h-result" hidden>
+      <h2 id="h-result">Result</h2>
+
+      <div class="progress" id="progress" hidden>
+        <div class="bar-track"><div class="bar" id="bar"></div></div>
+        <div class="progress-meta"><span id="progress-label">Starting...</span><span id="progress-pct">0%</span></div>
+      </div>
+
+      <div id="result-body" hidden>
+        <div class="banner" id="banner">
+          <svg class="ico" id="banner-icon" aria-hidden="true"><use href="#i-check"/></svg>
+          <div><strong id="banner-title"></strong><span id="banner-sub"></span></div>
+        </div>
+
+        <div class="stats" id="summary"></div>
+
+        <div class="actions">
+          <a class="btn primary lg" id="btn-download" href="#" download>
+            <svg class="ico" aria-hidden="true"><use href="#i-download"/></svg>Download converted mod
+          </a>
+          <button class="btn" id="btn-report" type="button">Download report</button>
+          <button class="btn ghost" id="btn-again" type="button">Convert another</button>
+        </div>
+        <p class="muted" id="dl-size"></p>
+
+        <div class="tabs" role="tablist" aria-label="Conversion details">
+          <button role="tab" id="tab-warn" aria-selected="true" aria-controls="panel-warn" class="tab">Warnings <span class="count" id="cnt-warn">0</span></button>
+          <button role="tab" id="tab-err" aria-selected="false" aria-controls="panel-err" class="tab" tabindex="-1">Errors <span class="count" id="cnt-err">0</span></button>
+          <button role="tab" id="tab-log" aria-selected="false" aria-controls="panel-log" class="tab" tabindex="-1">Log</button>
+        </div>
+        <div class="panel" id="panel-warn" role="tabpanel" aria-labelledby="tab-warn" tabindex="0">
+          <ul class="list" id="warn-list"></ul>
+          <p class="empty" id="warn-empty" hidden>No warnings. Everything converted cleanly.</p>
+        </div>
+        <div class="panel" id="panel-err" role="tabpanel" aria-labelledby="tab-err" tabindex="0" hidden>
+          <ul class="list err" id="err-list"></ul>
+          <p class="empty" id="err-empty" hidden>No errors.</p>
+        </div>
+        <div class="panel" id="panel-log" role="tabpanel" aria-labelledby="tab-log" tabindex="0" hidden>
+          <pre class="log" id="log"></pre>
+        </div>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <p>To install: extract the converted folder into the game's <code>mods</code> folder and restart. Formats are based on the source code of <a href="https://github.com/FunkinCrew/Funkin" target="_blank" rel="noopener">FunkinCrew/Funkin</a>. Not affiliated with the Funkin' Crew.</p>
+    </footer>
+  </main>
+
+  <script src="js/vendor/jszip.min.js"></script>
+  <script src="js/util.js"></script>
+  <script src="js/songs.js"></script>
+  <script src="js/characters.js"></script>
+  <script src="js/stages.js"></script>
+  <script src="js/weeks.js"></script>
+  <script src="js/converter.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
