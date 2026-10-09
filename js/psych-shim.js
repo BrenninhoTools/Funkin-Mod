@@ -866,6 +866,17 @@
   function stringSplit(s, sep) { return s.split(sep); }` },
     stringTrim: { code: `
   function stringTrim(s) { return StringTools.trim(s); }` },
+    // Cosmetic text settings with no V-Slice equivalent: accepted and ignored instead of reported as unsupported.
+    setTextFont: { code: `
+  function setTextFont(tag, ?font) { return null; }` },
+    setTextItalic: { code: `
+  function setTextItalic(tag, ?italic) { return null; }` },
+    setTextAutoSize: { code: `
+  function setTextAutoSize(tag, ?autoSize) { return null; }` },
+    updateScoreText: { code: `
+  function updateScoreText() { return null; }` },
+    setLuaSpriteScrollFactor: { deps: ['setScrollFactor'], code: `
+  function setLuaSpriteScrollFactor(tag, x, y) { setScrollFactor(tag, x, y); }` },
     getColorFromHex: { deps: ['__color'], code: `
   function getColorFromHex(c) { return __color(c); }` },
 

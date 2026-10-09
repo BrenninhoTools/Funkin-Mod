@@ -14,7 +14,7 @@
 (function (root) {
   const C = (root.FNFConv = root.FNFConv || {});
 
-  const STATIC_STAGE_FNS = new Set(['makeLuaSprite', 'makeAnimatedLuaSprite', 'addAnimationByPrefix', 'addAnimationByIndices', 'objectPlayAnimation', 'scaleObject', 'setScrollFactor', 'addLuaSprite', 'setBlendMode', 'setProperty']);
+  const STATIC_STAGE_FNS = new Set(['makeLuaSprite', 'makeAnimatedLuaSprite', 'makeGraphic', 'luaSpriteMakeGraphic', 'addAnimationByPrefix', 'addAnimationByIndices', 'luaSpriteAddAnimationByPrefix', 'luaSpriteAddAnimationByIndices', 'objectPlayAnimation', 'luaSpritePlayAnimation', 'scaleObject', 'setGraphicSize', 'screenCenter', 'setScrollFactor', 'setLuaSpriteScrollFactor', 'addLuaSprite', 'setBlendMode', 'setProperty']);
   // Only the setup code of a stage (onCreate / main chunk) is folded into the static stage JSON; calls inside
   // other callbacks (onBeatHit, onUpdate...) are runtime behaviour and must stay in the script.
   const SETUP = new Set(['__main', 'onCreate', 'onCreatePost']);
@@ -87,7 +87,7 @@
           const evName = fileId(p);
           plan.events.push({ path: p, name: evName, part });
           passNames.add(evName);
-          part.callbacks.forEach((v, k) => !['onEvent', 'onCreate'].includes(k) && report.warn(p + ': callback "' + k + '" in a custom event is ignored'));
+          part.callbacks.forEach((v, k) => !['onEvent', 'onCreate', 'onCreatePost', 'onTimerCompleted', 'onTweenCompleted'].includes(k) && report.warn(p + ': callback "' + k + '" in a custom event is ignored'));
         }
       } else if (top === 'custom_notetypes') {
         const part = await translate(p, prefix, null);

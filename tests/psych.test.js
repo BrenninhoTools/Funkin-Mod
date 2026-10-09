@@ -153,9 +153,35 @@ function buildFakeMod() {
   z.file(R + 'custom_notetypes/Hurt Note.lua', "function goodNoteHit(id, direction, noteType, isSustainNote)\n  setHealth(getHealth() - 0.4)\nend\n");
   // Real-world Psych JSON is sloppy: comments, a missing comma, trailing commas.
   z.file(R + 'stages/lenient.json', '{\n  // a comment\n  "defaultZoom": 0.7,\n  "boyfriend": [770, 100]\n  "girlfriend": [400, 130],\n  "opponent": [100, 100,],\n}\n');
-  // Audio in a differently-cased folder and in mp3 format.
-  z.file(R + 'data/odd-song/odd-song.json', JSON.stringify({ song: { song: 'Odd Song', bpm: 100, speed: 1, player1: 'bf', player2: 'dad', stage: 'stage', notes: [{ mustHitSection: true, sectionNotes: [[0, 0, 0]] }] } }));
+  // Audio in a differently-cased folder and in mp3 format; stage referenced with another letter case; legacy numeric note type.
+  z.file(R + 'data/odd-song/odd-song.json', JSON.stringify({ song: { song: 'Odd Song', bpm: 100, speed: 1, player1: 'cool-bf2', player2: 'cool-dad', stage: 'Hallo', notes: [{ mustHitSection: true, sectionNotes: [[0, 0, 0, '0']] }] } }));
   z.file(R + 'songs/Odd-Song/Inst.mp3', OGG);
+  z.file(R + 'characters/cool-bf2.json', JSON.stringify({ animations: [{ anim: 'idle', name: 'x', fps: 24, loop: false, indices: [], offsets: [0, 0] }], image: 'characters/COOL_DAD', healthicon: 'dad' })); // shares the "dad" icon with cool-dad
+  // A stage whose scenery is built from a Lua constant, a solid rectangle, setGraphicSize and screenCenter.
+  z.file(R + 'stages/hallo.json', JSON.stringify({ defaultZoom: 0.9 }));
+  z.file(R + 'stages/hallo.lua', `local escenario = 'stages/hallo/'
+function onCreate()
+  makeLuaSprite('bgc', escenario..'bg-clouds', -100, 50)
+  setScrollFactor('bgc', 0.5, 0.5)
+  addLuaSprite('bgc', false)
+  makeLuaSprite('white', '', 0, 0)
+  makeGraphic('white', 400, 200, 'FF0000')
+  screenCenter('white')
+  addLuaSprite('white', true)
+  makeLuaSprite('sky', escenario..'sky')
+  setGraphicSize('sky', 640)
+  addLuaSprite('sky', false)
+end
+function onBeatHit() setProperty('bgc.alpha', 0.5) end
+`);
+  z.file(R + 'images/stages/hallo/bg-clouds.png', PNG);
+  z.file(R + 'images/stages/hallo/sky.png', PNG);
+  // A week without a title image, engine list files, script assets and the intro text.
+  z.file(R + 'weeks/week2.json', JSON.stringify({ songs: [['Odd Song', 'dad', [1, 2, 3]]], weekCharacters: ['', '', ''], storyName: 'Second', weekName: 'Second' }));
+  z.file(R + 'weeks/weekList.txt', 'week1\nweek2');
+  z.file(R + 'data/characterList.txt', 'cool-bf');
+  z.file(R + 'data/introText.txt', 'a--b');
+  z.file(R + 'scripts/Rating/Combe.png', PNG);
   z.file(R + 'scripts/broken.lua', 'function onCreate(\n');
   z.file(R + 'shaders/blur.frag', 'void main(){}');
   z.file(R + 'music/menu.ogg', OGG);
@@ -172,7 +198,7 @@ async function run(t) {
   const scan = await C.scanMod(zip, mods[0]);
   assert.strictEqual(scan.engine, 'psych');
   assert.deepStrictEqual(scan.songs.sort(), ['lonely', 'odd-song', 'test-song']);
-  assert.deepStrictEqual(scan.characters.sort(), ['cool-bf', 'cool-dad']);
+  assert.deepStrictEqual(scan.characters.sort(), ['cool-bf', 'cool-bf2', 'cool-dad']);
   assert.strictEqual(scan.pack.name, 'Cool Mod');
 
   const res = await C.convertMod(zip, mods[0], { JSZip, artist: 'Me', author: 'Tester' });
@@ -238,7 +264,7 @@ async function run(t) {
   assert.strictEqual(lm.playData.characters.playerVocals, undefined);
   assert(re.file(M + 'songs/lonely/Voices.ogg'));
   const extras = await readJson(re, M + 'data/levels/cool-mod-extras.json');
-  assert.deepStrictEqual(extras.songs, ['lonely', 'odd-song']);
+  assert.deepStrictEqual(extras.songs, ['lonely']);
   assert.strictEqual(extras.visible, false);
 
   // --- characters
@@ -309,6 +335,33 @@ async function run(t) {
   assert(re.file(M + 'songs/odd-song/Inst.mp3'), 'audio found in a differently-cased folder, kept as mp3');
   assert(res.report.warnings.some((w) => /Inst\.mp3.*only reads \.ogg/.test(w)));
   assert(C.lenientParse('{a: 1, \'b\': [1, 2,], /* c */ "d": "x" "e": true,}').e === true);
+  const oddMeta = await readJson(re, M + 'data/songs/odd-song/odd-song-metadata.json');
+  assert.strictEqual(oddMeta.playData.stage, 'hallo', 'stage "Hallo" resolves to stages/hallo.json');
+  assert.deepStrictEqual(oddMeta.playData.characters.player, 'cool-bf2');
+  assert.deepStrictEqual((await readJson(re, M + 'data/songs/odd-song/odd-song-chart.json')).notes.normal, [{ t: 0, d: 0 }], 'numeric note type "0" is a normal note');
+  assert(!res.report.warnings.some((w) => /Duplicate output/.test(w)), 'icons shared by several characters are written once');
+
+  // --- stage scenery built from Lua constants and static helpers
+  const hallo = await readJson(re, M + 'data/stages/hallo.json');
+  assert.deepStrictEqual(hallo.props.map((p) => [p.name, p.zIndex]), [['bgc', 10], ['sky', 20], ['white', 410]]);
+  assert.strictEqual(hallo.props[0].assetPath, 'stages/hallo/bg-clouds');
+  assert.deepStrictEqual(hallo.props[0].position, [-100, 50]);
+  assert.strictEqual(hallo.props[1].assetPath, 'stages/hallo/sky');
+  assert.strictEqual(hallo.props[1].scale, 640, 'setGraphicSize(tag, 640) on a 1x1 image');
+  assert.strictEqual(hallo.props[2].assetPath, 'stages/cool-mod/solid-ff0000ff');
+  assert.deepStrictEqual(hallo.props[2].scale, [400, 200]);
+  assert.deepStrictEqual(hallo.props[2].position, [440, 260], 'screenCenter on the 400x200 rectangle');
+  assert(re.file(M + 'images/stages/cool-mod/solid-ff0000ff.png'));
+  const halloScript = await readText(re, M + 'scripts/stages/hallo.hxc');
+  assert(!/makeLuaSprite|makeGraphic|screenCenter|setGraphicSize/.test(halloScript.split('function s')[1] || ''), 'static setup is not repeated at runtime');
+  assert(/setProperty\("bgc.alpha", 0\.5\)/.test(halloScript), 'runtime changes in onBeatHit are kept');
+
+  // --- weeks / misc files
+  const w2 = await readJson(re, M + 'data/levels/cool-mod-week2.json');
+  assert.strictEqual(w2.titleAsset, 'storymenu/titles/cool-mod-week2');
+  assert(re.file(M + 'images/storymenu/titles/cool-mod-week2.png'), 'missing title image -> transparent placeholder');
+  assert(re.file(M + 'data/introText.txt') && re.file(M + 'scripts/Rating/Combe.png'));
+  assert(!/weekList|characterList/.test(await readText(re, M + 'CONVERSION_REPORT.md')), 'engine list files are not reported');
 
   // --- missing audio: the error says what was found instead
   const ghost = new JSZip();

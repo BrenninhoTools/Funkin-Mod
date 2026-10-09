@@ -69,6 +69,7 @@
     if (raw === true) return 'alt';
     if (raw == null || raw === false || raw === '' || typeof raw === 'number') return null;
     const s = String(raw);
+    if (/^\d+$/.test(s.trim()) || ['null', 'false', 'undefined'].includes(s.trim().toLowerCase())) return null; // legacy numeric note types mean "normal note"
     const key = s.toLowerCase().trim();
     if (key === 'alt animation') return 'alt';
     if (key === 'no animation') return 'noanim'; // NoAnimNoteKind id in V-Slice
@@ -351,11 +352,11 @@
     const ps = primary.song;
 
     // --- Characters / stage -----------------------------------------------------------
-    const player = ps.player1 || 'bf';
-    const opponent = ps.player2 || 'dad';
-    const girlfriend = ps.gfVersion || ps.player3 || 'gf';
-    let stage = ps.stage;
-    if (!stage) stage = 'stage';
+    // Psych resolves files case-insensitively on Windows, so "Halloween" can mean stages/halloween.json.
+    const player = C.resolveId(ctx.modChars, ps.player1 || 'bf');
+    const opponent = C.resolveId(ctx.modChars, ps.player2 || 'dad');
+    const girlfriend = C.resolveId(ctx.modChars, ps.gfVersion || ps.player3 || 'gf');
+    let stage = C.resolveId(ctx.modStages, ps.stage || 'stage');
     const stageLower = String(stage).toLowerCase();
     let stageOut = stage;
     let pixel = false;

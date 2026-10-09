@@ -130,7 +130,7 @@
     const iconWant = 'images/icons/icon-' + iconId + '.png';
     const iconAlt = 'images/icons/' + iconId + '.png';
     if (!fs.exists(iconWant) && fs.exists(iconAlt)) {
-      out.binary('images/icons/icon-' + iconId + '.png', await fs.bytes(iconAlt));
+      if (!out.has('images/icons/icon-' + iconId + '.png')) out.binary('images/icons/icon-' + iconId + '.png', await fs.bytes(iconAlt));
     } else if (!fs.exists(iconWant)) {
       report.warn('Character "' + id + '": icon "' + iconId + '" not found in images/icons/.');
     }

@@ -21,6 +21,14 @@
     return r || 'converted-mod';
   };
 
+  /** Returns the real key of a Map/Set that matches `id` case-insensitively (or `id` itself when nothing matches). */
+  C.resolveId = function (coll, id) {
+    if (coll.has(id)) return id;
+    const l = String(id).toLowerCase();
+    for (const k of coll.keys()) if (String(k).toLowerCase() === l) return k;
+    return id;
+  };
+
   C.num = function (v, def) {
     const n = typeof v === 'number' ? v : parseFloat(v);
     return Number.isFinite(n) ? n : def;

@@ -95,7 +95,10 @@
     const titleAsset = 'storymenu/titles/' + id;
     const titleSrc = ['images/storymenu/' + file + '.png', 'images/storymenu/' + id + '.png'].find((p) => fs.exists(p));
     if (titleSrc) out.binary('images/' + titleAsset + '.png', await fs.bytes(titleSrc));
-    else report.warn('Week "' + file + '": title image "images/storymenu/' + file + '.png" not found.');
+    else {
+      report.warn('Week "' + file + '": title image "images/storymenu/' + file + '.png" not found; using an empty (transparent) title so the menu does not break.');
+      out.binary('images/' + titleAsset + '.png', blankPng());
+    }
 
     const props = [];
     const BLANK_ASSET = 'storymenu/props/' + ctx.modId + '-empty';

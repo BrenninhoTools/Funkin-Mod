@@ -235,6 +235,8 @@
       const top = lower.split('/')[0];
       if (['songs', 'characters', 'stages', 'weeks'].includes(top) && /\.(json|ogg)$/.test(lower)) return true;
       if (lower.startsWith('data/') && lower.endsWith('.json')) return true;
+      // Psych-only list files that V-Slice does not use (it discovers characters, stages and weeks from their folders).
+      if (/^(data\/(characterlist|gflist|stagelist|weeknames|specialthanks|data-goes-here)\.txt|weeks\/weeklist\.txt)$/.test(lower)) return true;
       if (lower.startsWith('stages/') && lower.endsWith('.lua') && fs.exists(p.replace(/\.lua$/i, '.json'))) return true;
       if (ctx.convertScripts && lower.startsWith('custom_events/') && lower.endsWith('.txt')) return true;
       if (lower.endsWith('.json') && lower.startsWith('images/menucharacters/')) return true;
@@ -308,8 +310,11 @@
         continue;
       }
       const top = lower.split('/')[0];
-      if (MEDIA.includes(top)) {
-        if (handledByConverter(ctx, p, lower)) continue;
+      // Assets that scripts load (scripts/Rating/*.png...) and V-Slice's own intro text file are kept as-is.
+      const scriptAsset = top === 'scripts' && !/\.(lua|hx|hscript)$/.test(lower);
+      const introText = engine === 'psych' && lower === 'data/introtext.txt';
+      if (MEDIA.includes(top) || scriptAsset || introText) {
+        if (!scriptAsset && !introText && handledByConverter(ctx, p, lower)) continue;
         if (!out.has(p)) {
           out.binary(p, await fs.bytes(p));
           copied++;

@@ -2,9 +2,11 @@
  * Stages: Psych stages/<id>.json (+ optional .lua) -> V-Slice data/stages/<id>.json.
  *
  * Psych's stage JSON only stores character positions and the zoom; the scenery lives in Lua.
- * The Lua is read on a best-effort basis: only calls with literal arguments are understood
- * (makeLuaSprite, makeAnimatedLuaSprite, addAnimationByPrefix, scaleObject, setScrollFactor, addLuaSprite...).
- * Anything dynamic (variables, onBeatHit, shaders...) becomes a warning in the report.
+ * The Lua is read on a best-effort basis: only calls whose arguments can be evaluated statically are understood
+ * (literals, `local name = "literal"` constants and `..` concatenations of them):
+ *   makeLuaSprite, makeAnimatedLuaSprite, makeGraphic, addAnimationByPrefix, scaleObject, setScrollFactor,
+ *   setGraphicSize, screenCenter, addLuaSprite...
+ * Anything dynamic (other variables, onBeatHit, shaders...) is left for the generated stage script, or reported.
  *
  * From the source code (source/funkin/play/stage/Stage.hx):
  *   character.x = stage.characters.<slot>.position[0] - characterOrigin.x   // origin = feet (bottom-center)
@@ -15,14 +17,16 @@
 
   const STAGE_VERSION = '1.0.2';
   const FALLBACK_FRAME = { w: 400, h: 400 };
+  const SCREEN = { w: 1280, h: 720 };
 
   /* ----------------------------- Lua (best effort) ----------------------------- */
   function stripLuaComments(src) {
     return src.replace(/--\[(=*)\[[\s\S]*?\]\1\]/g, '').replace(/--[^\n]*/g, '');
   }
 
-  function splitArgs(s) {
-    const args = [];
+  function splitTop(s, sep) {
+    // Splits `s` on `sep` outside of quotes.
+    const parts = [];
     let cur = '';
     let q = null;
     for (let i = 0; i < s.length; i++) {
@@ -34,14 +38,16 @@
       } else if (ch === '"' || ch === "'") {
         q = ch;
         cur += ch;
-      } else if (ch === ',') {
-        args.push(cur.trim());
+      } else if (s.startsWith(sep, i)) {
+        parts.push(cur.trim());
         cur = '';
+        i += sep.length - 1;
       } else cur += ch;
     }
-    if (cur.trim() !== '' || args.length) args.push(cur.trim());
-    return args;
+    parts.push(cur.trim());
+    return parts;
   }
+  const splitArgs = (s) => (s.trim() === '' ? [] : splitTop(s, ','));
 
   /** Parses a Lua literal; returns undefined when the argument is not a literal. */
   function lit(a) {
@@ -55,10 +61,43 @@
     return undefined;
   }
 
+  /** `local name = "literal"` / `name = 12` assignments (only names that are never given two different values). */
+  function collectConsts(code) {
+    const seen = new Map();
+    const re = /(?:^|\n)[ \t]*(?:local[ \t]+)?([A-Za-z_]\w*)[ \t]*=[ \t]*('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|-?\d+(?:\.\d+)?)[ \t]*(?=;|\n|$)/g;
+    let m;
+    while ((m = re.exec(code))) {
+      const v = lit(m[2]);
+      if (!seen.has(m[1])) seen.set(m[1], v);
+      else if (seen.get(m[1]) !== v) seen.set(m[1], undefined);
+    }
+    const out = new Map();
+    for (const [k, v] of seen) if (v !== undefined) out.set(k, v);
+    return out;
+  }
+
+  /** Evaluates an argument: literal, known constant, or a `..` concatenation of those. undefined = not static. */
+  function evalArg(a, consts) {
+    if (a == null) return undefined;
+    const l = lit(a);
+    if (l !== undefined) return l;
+    if (/^[A-Za-z_]\w*$/.test(a)) return consts.has(a) ? consts.get(a) : undefined;
+    const parts = splitTop(a, '..');
+    if (parts.length < 2) return undefined;
+    let out = '';
+    for (const p of parts) {
+      const v = evalArg(p, consts);
+      if (v === undefined || v === null || typeof v === 'boolean') return undefined;
+      out += v;
+    }
+    return out;
+  }
+
   const HANDLED = new Set([
     'makeLuaSprite', 'makeAnimatedLuaSprite', 'addAnimationByPrefix', 'addAnimationByIndices', 'addAnimation',
-    'objectPlayAnimation', 'scaleObject', 'setScrollFactor', 'addLuaSprite', 'setProperty', 'setBlendMode',
-    'setObjectOrder', 'precacheImage', 'makeGraphic', 'updateHitbox', 'screenCenter', 'setGraphicSize',
+    'luaSpriteAddAnimationByPrefix', 'luaSpriteAddAnimationByIndices', 'luaSpritePlayAnimation',
+    'objectPlayAnimation', 'scaleObject', 'setScrollFactor', 'setLuaSpriteScrollFactor', 'addLuaSprite', 'setProperty', 'setBlendMode',
+    'setObjectOrder', 'precacheImage', 'makeGraphic', 'luaSpriteMakeGraphic', 'updateHitbox', 'screenCenter', 'setGraphicSize',
   ]);
 
   /**
@@ -66,6 +105,7 @@
    */
   function parseStageLua(src) {
     const code = stripLuaComments(src);
+    const consts = collectConsts(code);
     const sprites = new Map();
     const order = [];
     const dynamic = new Set();
@@ -80,34 +120,39 @@
         continue;
       }
       const raw = splitArgs(m[2]);
-      const a = raw.map(lit);
+      const a = raw.map((x) => evalArg(x, consts));
       const tag = a[0];
       const needTag = () => typeof tag === 'string';
+      const spr = () => (needTag() ? sprites.get(tag) : undefined);
       switch (fn) {
         case 'makeLuaSprite':
         case 'makeAnimatedLuaSprite': {
-          if (!needTag() || typeof a[1] !== 'string') {
+          if (!needTag() || (raw.length > 1 && typeof a[1] !== 'string' && a[1] !== null)) {
             skipped.push(fn + '(' + m[2].trim() + ')');
             break;
           }
-          const x = raw.length > 2 ? a[2] : 0; // missing argument = 0; present but non-literal = skip
+          const x = raw.length > 2 ? a[2] : 0; // missing argument = 0; present but non-static = skip
           const y = raw.length > 3 ? a[3] : 0;
           if (typeof x !== 'number' || typeof y !== 'number') {
             skipped.push(fn + '(' + m[2].trim() + ')');
             break;
           }
-          sprites.set(tag, { tag, image: a[1], x, y, animated: fn === 'makeAnimatedLuaSprite', anims: [], scale: [1, 1], scroll: [1, 1], alpha: 1, flipX: false, angle: 0, blend: '', front: false, added: false, start: null });
+          sprites.set(tag, { tag, image: a[1] || '', x, y, animated: fn === 'makeAnimatedLuaSprite', anims: [], scale: [1, 1], scroll: [1, 1], alpha: 1, flipX: false, angle: 0, blend: '', front: false, added: false, start: null, solid: null, size: null, center: null });
           break;
         }
         case 'makeGraphic':
-          // makeGraphic creates a solid-color rectangle: no simple equivalent.
-          if (needTag()) {
+        case 'luaSpriteMakeGraphic': {
+          const s = spr();
+          if (s && typeof a[1] === 'number' && typeof a[2] === 'number') s.solid = { w: a[1], h: a[2], color: typeof a[3] === 'string' ? a[3] : 'FFFFFF' };
+          else if (needTag()) {
             sprites.delete(tag);
-            skipped.push('makeGraphic("' + tag + '") (solid rectangle)');
+            skipped.push(fn + '("' + tag + '", ...) with a size or color that is not a literal');
           }
           break;
-        case 'addAnimationByPrefix': {
-          const s = needTag() && sprites.get(tag);
+        }
+        case 'addAnimationByPrefix':
+        case 'luaSpriteAddAnimationByPrefix': {
+          const s = spr();
           if (s && typeof a[1] === 'string' && typeof a[2] === 'string') {
             const an = { name: a[1], prefix: a[2] };
             if (typeof a[3] === 'number' && a[3] !== 24) an.frameRate = a[3];
@@ -116,8 +161,9 @@
           }
           break;
         }
-        case 'addAnimationByIndices': {
-          const s = needTag() && sprites.get(tag);
+        case 'addAnimationByIndices':
+        case 'luaSpriteAddAnimationByIndices': {
+          const s = spr();
           if (s && typeof a[1] === 'string' && typeof a[2] === 'string' && typeof a[3] === 'string') {
             const an = { name: a[1], prefix: a[2], frameIndices: a[3].split(',').map((n) => parseInt(n, 10)).filter(Number.isFinite) };
             if (typeof a[4] === 'number' && a[4] !== 24) an.frameRate = a[4];
@@ -126,24 +172,37 @@
           }
           break;
         }
-        case 'objectPlayAnimation': {
-          const s = needTag() && sprites.get(tag);
+        case 'objectPlayAnimation':
+        case 'luaSpritePlayAnimation': {
+          const s = spr();
           if (s && typeof a[1] === 'string' && !s.start) s.start = a[1];
           break;
         }
         case 'scaleObject': {
-          const s = needTag() && sprites.get(tag);
+          const s = spr();
           if (s && typeof a[1] === 'number') s.scale = [a[1], typeof a[2] === 'number' ? a[2] : a[1]];
           break;
         }
-        case 'setScrollFactor': {
-          const s = needTag() && sprites.get(tag);
+        case 'setScrollFactor':
+        case 'setLuaSpriteScrollFactor': {
+          const s = spr();
           if (s && typeof a[1] === 'number') s.scroll = [a[1], typeof a[2] === 'number' ? a[2] : a[1]];
           break;
         }
         case 'setBlendMode': {
-          const s = needTag() && sprites.get(tag);
+          const s = spr();
           if (s && typeof a[1] === 'string') s.blend = a[1].toLowerCase();
+          break;
+        }
+        case 'setGraphicSize': {
+          const s = spr();
+          if (s && typeof a[1] === 'number') s.size = [a[1], typeof a[2] === 'number' ? a[2] : 0];
+          else if (s) skipped.push('setGraphicSize("' + tag + '") with a size that is not a literal');
+          break;
+        }
+        case 'screenCenter': {
+          const s = spr();
+          if (s) s.center = typeof a[1] === 'string' ? a[1].toLowerCase() : 'xy';
           break;
         }
         case 'setProperty': {
@@ -159,7 +218,7 @@
           break;
         }
         case 'addLuaSprite': {
-          const s = needTag() && sprites.get(tag);
+          const s = spr();
           if (s && !s.added) {
             s.added = true;
             s.front = a[1] === true;
@@ -167,17 +226,64 @@
           }
           break;
         }
-        case 'screenCenter':
-        case 'setGraphicSize':
-          if (needTag() && sprites.has(tag)) skipped.push(fn + '("' + tag + '") (depends on the image size)');
-          break;
         default:
           break;
       }
     }
-    return { sprites: order, dynamic, skipped };
+    return { sprites: order, dynamic, skipped, consts };
   }
   C.parseStageLua = parseStageLua;
+
+  function pngSize(bytes) {
+    if (!bytes || bytes.length < 24 || bytes[1] !== 0x50 || bytes[2] !== 0x4e || bytes[3] !== 0x47) return null;
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return { w: dv.getUint32(16), h: dv.getUint32(20) };
+  }
+
+  /** Fills image/scale/position of a parsed sprite using sizes read from the mod's own files. */
+  async function resolveSprite(s, ctx, stageId) {
+    const { fs, out, report } = ctx;
+    let native = null;
+    if (s.solid) {
+      const col = C.xml.parseColor(s.solid.color, { r: 255, g: 255, b: 255, a: 255 });
+      const hex = [col.r, col.g, col.b, col.a].map((v) => v.toString(16).padStart(2, '0')).join('');
+      s.image = 'stages/' + ctx.modId + '/solid-' + hex;
+      if (!out.has('images/' + s.image + '.png')) out.binary('images/' + s.image + '.png', C.xml.solidPng(col.r, col.g, col.b, col.a));
+      // The generated PNG is 1x1, so scale = size. scaleObject() after makeGraphic multiplies that size.
+      s.scale = [s.solid.w * s.scale[0], s.solid.h * s.scale[1]];
+      native = { w: 1, h: 1 };
+      s.pxSize = { w: s.solid.w, h: s.solid.h };
+    } else {
+      if (!s.image) return false;
+      if (s.animated && s.anims.length && fs.exists('images/' + s.image + '.xml')) {
+        try {
+          const frames = C.parseSparrow(await fs.text('images/' + s.image + '.xml'));
+          native = C.characters.frameSizeFor(frames, { name: s.anims[0].prefix });
+        } catch (e) {
+          native = null;
+        }
+      }
+      if (!native && (s.size || s.center) && fs.exists('images/' + s.image + '.png')) native = pngSize(await fs.bytes('images/' + s.image + '.png'));
+      if (native) s.pxSize = { w: native.w * s.scale[0], h: native.h * s.scale[1] };
+      if (s.size) {
+        if (!native) report.warn('Stage "' + stageId + '": could not read the size of "' + s.image + '" for setGraphicSize("' + s.tag + '")');
+        else {
+          const sx = s.size[0] / native.w;
+          const sy = s.size[1] ? s.size[1] / native.h : sx;
+          s.scale = [sx, sy];
+          s.pxSize = { w: native.w * sx, h: native.h * sy };
+        }
+      }
+    }
+    if (s.center) {
+      if (!s.pxSize) report.warn('Stage "' + stageId + '": could not center "' + s.tag + '" (unknown image size)');
+      else {
+        if (s.center.includes('x')) s.x = Math.round(((SCREEN.w - s.pxSize.w) / 2) * 10) / 10;
+        if (s.center.includes('y')) s.y = Math.round(((SCREEN.h - s.pxSize.h) / 2) * 10) / 10;
+      }
+    }
+    return true;
+  }
 
   function propFromSprite(s, zIndex, pixel, fs) {
     const hasXml = fs.exists('images/' + s.image + '.xml');
@@ -190,7 +296,7 @@
       scroll: s.scroll,
       danceEvery: 0,
       animType: 'sparrow',
-      isPixel: !!pixel,
+      isPixel: !!pixel || !!s.solid,
       animations: [],
     };
     if (s.alpha !== 1) p.alpha = s.alpha;
@@ -254,14 +360,30 @@
     const luaPath = fs.resolve('stages/' + id + '.lua');
     if (luaPath) {
       const parsed = parseStageLua(await fs.text(luaPath));
-      const behind = parsed.sprites.filter((s) => !s.front);
-      const front = parsed.sprites.filter((s) => s.front);
+      const usable = [];
+      for (const s of parsed.sprites) {
+        if (await resolveSprite(s, ctx, id)) usable.push(s);
+        else parsed.skipped.push('"' + s.tag + '" has no image');
+      }
+      const behind = usable.filter((s) => !s.front);
+      const front = usable.filter((s) => s.front);
       const step = behind.length ? Math.max(1, Math.min(10, Math.floor(90 / behind.length))) : 10;
       behind.forEach((s, i) => props.push(propFromSprite(s, (i + 1) * step, isPixel, fs)));
       front.forEach((s, i) => props.push(propFromSprite(s, 400 + (i + 1) * 10, isPixel, fs)));
+      for (const p of props) {
+        if (!p.assetPath.startsWith('stages/' + ctx.modId + '/solid-') && !fs.exists('images/' + p.assetPath + '.png'))
+          report.warn('Stage "' + id + '": image "images/' + p.assetPath + '.png" not found for prop "' + p.name + '".');
+      }
       if (parsed.skipped.length) report.warn('Stage "' + id + '": ' + parsed.skipped.length + ' Lua item(s) not converted: ' + parsed.skipped.slice(0, 5).join('; ') + (parsed.skipped.length > 5 ? '; ...' : ''));
-      if (parsed.dynamic.size) report.warn('Stage "' + id + '": the Lua uses dynamic logic (' + [...parsed.dynamic].slice(0, 8).join(', ') + ') that was not converted.');
+      if (parsed.dynamic.size) {
+        const names = [...parsed.dynamic].slice(0, 8).join(', ');
+        if (ctx.convertScripts) report.log('Stage "' + id + '": dynamic Lua logic (' + names + ') is handled by the generated stage script.');
+        else report.warn('Stage "' + id + '": the Lua uses dynamic logic (' + names + ') that was not converted (script conversion is off).');
+      }
       report.count('Stage props extracted from Lua', props.length);
+      // Used by the script converter so setup calls already folded into the JSON are not repeated at runtime.
+      ctx.stageStaticTags = ctx.stageStaticTags || new Map();
+      ctx.stageStaticTags.set(id, new Set(usable.map((s) => s.tag)));
     } else {
       report.warn('Stage "' + id + '": there is no stages/' + id + '.lua, so the stage has no scenery (only positions and zoom).');
     }
@@ -279,5 +401,5 @@
     return { id, isPixel };
   }
 
-  C.stages = { convertStage, parseStageLua };
+  C.stages = { convertStage, parseStageLua, evalArg, collectConsts };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -285,7 +285,7 @@
       '  override function handleEvent(data:SongEventData):Void {\n' +
       '    var ps = PlayState.instance;\n' +
       '    if (ps == null) return;\n' +
-      '    if (__ps != ps) {\n      __ps = ps;\n' + resetState + '\n      lua_refresh();\n      ' + part.mainFn + '();\n' + (defines(part, 'onCreate') ? '      ' + part.prefix + 'onCreate();\n' : '') + '    }\n' +
+      '    if (__ps != ps) {\n      __ps = ps;\n' + resetState + '\n      lua_refresh();\n      ' + part.mainFn + '();\n' + (defines(part, 'onCreate') ? '      ' + part.prefix + 'onCreate();\n' : '') + (defines(part, 'onCreatePost') ? '      ' + part.prefix + 'onCreatePost();\n' : '') + '    }\n' +
       '    lua_refresh();\n' +
       '    var v = data.value;\n' +
       "    var v1 = v == null ? null : Reflect.field(v, 'value1');\n" +
@@ -326,7 +326,7 @@
       );
     }
     const boot =
-      '  var __ps = null;\n  function __boot() {\n    var ps = PlayState.instance;\n    if (ps == null || __ps == ps) return;\n    __ps = ps;\n' + resetState + '\n    lua_refresh();\n    ' + part.mainFn + '();\n' + (defines(part, 'onCreate') ? '    ' + part.prefix + 'onCreate();\n' : '') + '  }';
+      '  var __ps = null;\n  function __boot() {\n    var ps = PlayState.instance;\n    if (ps == null || __ps == ps) return;\n    __ps = ps;\n' + resetState + '\n    lua_refresh();\n    ' + part.mainFn + '();\n' + (defines(part, 'onCreate') ? '    ' + part.prefix + 'onCreate();\n' : '') + (defines(part, 'onCreatePost') ? '    ' + part.prefix + 'onCreatePost();\n' : '') + '  }';
     return (
       header('custom note type "' + kindId + '"', sources) +
       importLines(shared.imports, ['funkin.play.notes.notekind.NoteKind']) + '\n\n' +

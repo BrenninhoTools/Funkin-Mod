@@ -168,7 +168,7 @@
     const want = 'images/icons/icon-' + iconId + '.png';
     const old = ['images/icons/' + iconId + '.png', 'images/icons/' + iconId + '/icon.png'].find((p) => fs.exists(p));
     if (!fs.exists(want)) {
-      if (old) out.binary('images/icons/icon-' + iconId + '.png', await fs.bytes(old));
+      if (old) { if (!out.has('images/icons/icon-' + iconId + '.png')) out.binary('images/icons/icon-' + iconId + '.png', await fs.bytes(old)); }
       else report.warn('Character "' + id + '": icon "' + iconId + '" not found in images/icons/.');
     }
 
@@ -369,7 +369,10 @@
     const titleAsset = 'storymenu/titles/' + id;
     const titleSrc = ['images/menus/storymenu/weeks/' + titleSprite + '.png'].find((p) => fs.exists(p));
     if (titleSrc) out.binary('images/' + titleAsset + '.png', await fs.bytes(titleSrc));
-    else report.warn('Week "' + file + '": title image "images/menus/storymenu/weeks/' + titleSprite + '.png" not found.');
+    else {
+      report.warn('Week "' + file + '": title image "images/menus/storymenu/weeks/' + titleSprite + '.png" not found; using an empty (transparent) title.');
+      out.binary('images/' + titleAsset + '.png', X().solidPng(0, 0, 0, 0));
+    }
 
     const blank = 'storymenu/props/' + ctx.modId + '-empty';
     const props = [];
@@ -661,6 +664,9 @@
       if (os && os.characters && os.characters[0]) opponent = os.characters[0];
       if (gs && gs.characters && gs.characters[0]) girlfriend = gs.characters[0];
     }
+    player = C.resolveId(ctx.modChars, player);
+    opponent = C.resolveId(ctx.modChars, opponent);
+    if (girlfriend) girlfriend = C.resolveId(ctx.modChars, girlfriend);
     for (const c of [player, opponent, girlfriend].filter(Boolean)) {
       if (!ctx.modChars.has(c) && !ctx.warnedBaseChars.has(c)) {
         ctx.warnedBaseChars.add(c);
@@ -668,7 +674,7 @@
       }
     }
 
-    let stage = pc.stage || 'stage';
+    let stage = C.resolveId(ctx.modStages, pc.stage || 'stage');
     let stageOut = stage;
     let pixel = false;
     if (ctx.modStages.has(stage)) pixel = !!ctx.modStages.get(stage).isPixel;
