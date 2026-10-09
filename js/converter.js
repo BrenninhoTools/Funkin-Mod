@@ -340,7 +340,7 @@
 
     for (const [cat, list] of report.unconverted) report.warn(cat + ': ' + list.length + ' file(s) with no automatic conversion (see the report).');
     if (!report.stats['Songs converted'] && !report.stats['Characters converted'] && !report.stats['Weeks converted'])
-      report.error('Nothing was converted: this zip does not look like a ' + engineName + ' mod.');
+      report.error('Nothing was converted: this zip does not look like a ' + engineName + ' mod (engine ' + (opts.engine && opts.engine !== 'auto' ? 'chosen manually' : 'auto-detected') + '). If it is from the other engine, pick it in "Source engine". Codename mods have data/config/modpack.ini and XML characters; Psych mods have pack.json and JSON characters.');
 
     const reportText = report.toMarkdown(title, engineName);
     if (opts.includeReport !== false) out.text('CONVERSION_REPORT.md', reportText);
