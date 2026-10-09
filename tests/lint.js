@@ -57,6 +57,12 @@ function lint(text) {
     if (toks[j - 1] && toks[j - 1].t === 'import' || (toks[j] && toks[j].t === 'import')) continue;
     problems.add(t.t);
   }
+  // Calls the game's script sandbox blacklists or does not provide (funkin.util.ReflectUtil / PolymodHandler).
+  const stripped = text.replace(/"(?:[^"\\\n]|\\.)*"/g, '""').replace(/\/\/[^\n]*/g, '');
+  for (const re of [/\bType\.typeof\b/, /\bType\.getClass\b/, /\bReflect\.deleteField\b/]) {
+    const m = re.exec(stripped);
+    if (m) problems.add('blocked-api:' + m[0]);
+  }
   return [...problems];
 }
 

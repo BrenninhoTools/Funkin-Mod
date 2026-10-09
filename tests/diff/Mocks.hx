@@ -122,6 +122,9 @@ class MockStage {
   public function getDad(?pop:Bool):MockChar return dad;
   public function getGirlfriend(?pop:Bool):MockChar return gf;
   public function getNamedProp(n:String):Dynamic return Reflect.field(props, n);
+  public function add(o:Dynamic, ?above:Bool):Void Log.add('Stage.add ' + o.name + ' z=' + o.zIndex);
+  public function remove(o:Dynamic, ?destroy:Bool):Void Log.add('Stage.remove ' + o.name);
+  public function refresh():Void Log.add('Stage.refresh');
 }
 
 class MockStrumline {
@@ -266,4 +269,17 @@ class MockPrefs {
 }
 class MockBorder {
   public static var OUTLINE:String = 'OUTLINE';
+}
+
+class MockTallies {
+  public var missed:Int = 2;
+  public var combo:Int = 7;
+  public var sick:Int = 1;
+  public var good:Int = 0;
+  public var bad:Int = 0;
+  public var shit:Int = 0;
+  public function new() {}
+}
+class MockHighscore {
+  public static var tallies = new MockTallies();
 }

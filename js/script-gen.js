@@ -1,15 +1,14 @@
 /*
- * Builds V-Slice HScript (.hxc) class files from translated Psych Lua parts.
+ * Builds V-Slice HScript (.hxc) class files from a translated Psych Lua script.
  *
- * A "part" is the result of C.psychLua.translate() for one Lua file. Several parts can share one class
- * (their members are prefixed), e.g. every script that belongs to the same song.
+ * Every Lua file becomes ONE class, written the way the official scripts are (see Funkin.assets and the Module example):
+ *   module -> class X extends Module   (global, per-song and per-stage scripts; handlers are plain `function onUpdate(event)`)
+ *   event  -> class X extends SongEvent  (custom_events/<name>.lua)
+ *   kind   -> class X extends NoteKind   (custom_notetypes/<name>.lua)
  *
- * Class kinds (all verified against the Funkin source, see docs in the README):
- *   song   -> class X extends Song          (events dispatched by PlayState; onCreate fires after stage+characters exist)
- *   module -> class X extends Module        (global scripts; lazily initialised per PlayState instance)
- *   stage  -> class X extends Stage         (super('stageId'))
- *   event  -> class X extends SongEvent     (handleEvent + chart editor schema)
- *   kind   -> class X extends NoteKind      (super('kindId', 'title'))
+ * Psych callbacks stay as small functions (luaOnBeatHit, luaGoodNoteHit...) that the V-Slice handlers call, so a Lua
+ * `return` inside a callback keeps its meaning. `onCreate` / `onCreatePost` run once per PlayState, as soon as the
+ * stage exists (Modules have no per-song create event).
  */
 (function (root) {
   const C = (root.FNFConv = root.FNFConv || {});
@@ -24,317 +23,281 @@
   C.pascal = pascal;
 
   const q = (s) => C.psychLua.hsString(s);
+  const IND = '    ';
 
-  /** Union of what the parts need, as a members string + imports. */
-  function sharedSection(parts, extraShim, extraImports) {
-    const names = new Set(extraShim || []);
-    parts.forEach((p) => p.used.forEach((n) => names.add(n)));
-    const { code, imports } = C.psychShim.collect(names);
-    (extraImports || []).forEach((i) => imports.add(i));
-    const fields = Object.entries(C.PSYCH_GLOBALS).map(([k, v]) => '  var ' + k + ' = ' + v + ';').join('\n');
-    return { code: fields + '\n' + C.psychShim.BASE + '\n' + code, imports };
-  }
+  /** Class name -> import path, for everything the generated code may reference. */
+  const IMPORTS = {
+    PlayState: 'funkin.play.PlayState',
+    PlayStatePlaylist: 'funkin.play.PlayStatePlaylist',
+    Conductor: 'funkin.Conductor',
+    Highscore: 'funkin.Highscore',
+    PlayerSettings: 'funkin.PlayerSettings',
+    FunkinSprite: 'funkin.graphics.FunkinSprite',
+    FunkinSound: 'funkin.audio.FunkinSound',
+    FlxG: 'flixel.FlxG',
+    FlxText: 'flixel.text.FlxText',
+    FlxTextBorderStyle: 'flixel.text.FlxText.FlxTextBorderStyle',
+    FlxTween: 'flixel.tweens.FlxTween',
+    FlxEase: 'flixel.tweens.FlxEase',
+    FlxTimer: 'flixel.util.FlxTimer',
+    FlxColor: 'flixel.util.FlxColor',
+    FlxSprite: 'flixel.FlxSprite',
+    SongEventData: 'funkin.data.song.SongData.SongEventData',
+    SongEventRegistry: 'funkin.data.event.SongEventRegistry',
+    Preferences: 'funkin.Preferences',
+    Paths: 'funkin.Paths',
+    StringTools: 'StringTools',
+  };
+  C.SCRIPT_IMPORTS = IMPORTS;
 
-  function importLines(imports, extra) {
-    const set = new Set();
-    for (const key of imports) {
-      const path = C.PSYCH_IMPORTS[key];
-      if (path) set.add(path);
-    }
-    (extra || []).forEach((e) => set.add(e));
+  /** Import lines for the classes mentioned in `body` (string literals and comments are ignored). */
+  function importsFor(body, extra) {
+    const stripped = body.replace(/"(?:[^"\\\n]|\\.)*"/g, '""').replace(/'(?:[^'\\\n]|\\.)*'/g, "''").replace(/\/\/[^\n]*/g, '');
+    const set = new Set(extra || []);
+    for (const name of Object.keys(IMPORTS)) if (new RegExp('\\b' + name + '\\b').test(stripped)) set.add(IMPORTS[name]);
     return [...set].sort().map((p) => 'import ' + p + ';').join('\n');
   }
 
-  const defines = (part, name) => part.callbacks.has(name);
-  const partsWith = (parts, name) => parts.filter((p) => defines(p, name));
-  const call = (part, name, args) => '    ' + part.prefix + name + '(' + (args || '') + ');';
+  const has = (part, name) => part.callbacks.has(name);
+  const fn = (part, name) => part.callbacks.get(name).fn;
 
-  /** Mapping of V-Slice event methods to the Psych callbacks they trigger. Returns method source strings. */
-  function dispatchers(parts, o) {
-    const methods = [];
-    const guard = o.guard ? '    if (!__ensure()) return;\n' : '    if (__closed) return;\n';
-    const sup = (m) => (o.callSuper ? '    super.' + m + '(event);\n' : '');
-    const kw = o.kind === 'module' ? 'override ' : 'override ';
+  /** Fields + helper functions + translated script. */
+  function members(part) {
+    const extra = C.psychApi.collectHelpers(part.helpers);
+    const fields = new Map(part.fields);
+    extra.fields.forEach((f) => { if (!fields.has(f)) fields.set(f, '{}'); });
+    // `part.members` already declares the script's own fields; add the helper fields it does not know about.
+    const missing = [...fields].filter(([name]) => !part.fields.has(name)).map(([name, init]) => IND + 'var ' + name + ' = ' + init + ';');
+    const fieldsText = [part.fieldsText, missing.join('\n')].filter(Boolean).join('\n');
+    const helpersText = extra.code.map((c) => c.split('\n').map((l) => (l ? IND + l : l)).join('\n')).join('\n\n');
+    return { fieldsText, functionsText: part.functionsText, helpersText, fields };
+  }
 
-    const add = (method, sig, bodyLines, withRefresh) => {
-      if (!bodyLines.length) return;
-      methods.push(
-        '  ' + kw + 'function ' + method + '(' + sig + '):Void {\n' + sup(method) + guard + (withRefresh === false ? '' : '    lua_refresh();\n') + bodyLines.join('\n') + '\n  }'
-      );
+  /** Class body in reading order: fields, constructor, framework glue, translated Lua, helpers. */
+  const assemble = (m, ...glue) => [m.fieldsText, ...glue, m.functionsText, m.helpersText].filter((x) => x && x.length).join('\n\n');
+
+  /** Statements that reset per-run state when a new PlayState starts. */
+  function resetLines(fields) {
+    const out = [];
+    for (const [name, init] of fields) if (init === '{}') out.push(IND.repeat(3) + name + ' = {};');
+    if (fields.has('__closed')) out.push(IND.repeat(3) + '__closed = false;');
+    return out;
+  }
+
+  function initLines(part, depth) {
+    const pad = IND.repeat(depth);
+    const l = [pad + 'luaMain();'];
+    if (has(part, 'onCreate')) l.push(pad + fn(part, 'onCreate') + '();');
+    if (has(part, 'onCreatePost')) l.push(pad + fn(part, 'onCreatePost') + '();');
+    return l;
+  }
+
+  /** V-Slice event handlers that route to the translated Psych callbacks. */
+  function handlers(part, guardCall) {
+    const out = [];
+    const guard = guardCall ? [IND.repeat(2) + guardCall] : [];
+    const add = (name, lines) => {
+      if (!lines.length) return;
+      out.push(IND + 'function ' + name + '(event)\n' + IND + '{\n' + guard.concat(lines.map((l) => IND.repeat(2) + l)).join('\n') + '\n' + IND + '}');
     };
+    const P = (n, args) => fn(part, n) + '(' + (args || '') + ');';
+    const l = [];
 
-    // update
-    {
-      const body = [];
-      parts.forEach((p) => {
-        if (defines(p, 'onUpdate')) body.push(call(p, 'onUpdate', 'event.elapsed'));
-        if (defines(p, 'onUpdatePost')) body.push(call(p, 'onUpdatePost', 'event.elapsed'));
-      });
-      add('onUpdate', 'event:UpdateScriptEvent', body);
+    if (has(part, 'onUpdate')) l.push(P('onUpdate', 'event.elapsed'));
+    if (has(part, 'onUpdatePost')) l.push(P('onUpdatePost', 'event.elapsed'));
+    add('onUpdate', l.splice(0));
+
+    if (has(part, 'onBeatHit')) l.push(P('onBeatHit'));
+    if (has(part, 'onSectionHit')) {
+      l.push('var perMeasure = Std.int(Conductor.instance.beatsPerMeasure);');
+      l.push('if (perMeasure > 0 && event.beat % perMeasure == 0)');
+      l.push('{');
+      l.push(IND + P('onSectionHit'));
+      l.push('}');
     }
-    // beat / section
-    {
-      const body = [];
-      parts.forEach((p) => defines(p, 'onBeatHit') && body.push(call(p, 'onBeatHit')));
-      const sect = partsWith(parts, 'onSectionHit');
-      if (sect.length) {
-        body.push('    var __bpm = Std.int(Conductor.instance.beatsPerMeasure);');
-        body.push('    if (__bpm > 0 && event.beat % __bpm == 0) {');
-        body.push('      curSection = Std.int(event.beat / __bpm);');
-        sect.forEach((p) => body.push('  ' + call(p, 'onSectionHit')));
-        body.push('    }');
-      }
-      add('onBeatHit', 'event:SongTimeScriptEvent', body);
+    add('onBeatHit', l.splice(0));
+
+    if (has(part, 'onStepHit')) l.push(P('onStepHit'));
+    add('onStepHit', l.splice(0));
+
+    if (has(part, 'onSongStart')) l.push(P('onSongStart'));
+    add('onSongStart', l.splice(0));
+
+    if (has(part, 'onEndSong')) l.push(P('onEndSong'));
+    add('onSongEnd', l.splice(0));
+
+    if (has(part, 'onStartCountdown')) l.push('if (' + fn(part, 'onStartCountdown') + '() == "##PSYCHLUA_FUNCTIONSTOP") event.cancel();');
+    if (has(part, 'onCountdownStarted')) l.push(P('onCountdownStarted'));
+    add('onCountdownStart', l.splice(0));
+
+    if (has(part, 'onCountdownTick')) {
+      l.push('var tick = Std.string(event.step);');
+      l.push('var n = tick == "THREE" ? 0 : (tick == "TWO" ? 1 : (tick == "ONE" ? 2 : (tick == "GO" ? 3 : -1)));');
+      l.push('if (n >= 0) ' + P('onCountdownTick', 'n'));
     }
-    {
-      const body = [];
-      parts.forEach((p) => defines(p, 'onStepHit') && body.push(call(p, 'onStepHit')));
-      add('onStepHit', 'event:SongTimeScriptEvent', body);
+    add('onCountdownStep', l.splice(0));
+
+    if (has(part, 'goodNoteHit') || has(part, 'opponentNoteHit')) {
+      l.push('var note = event.note.noteData;');
+      l.push('var kind = note.kind == null ? "" : note.kind;');
+      const good = has(part, 'goodNoteHit') ? [P('goodNoteHit', '0, note.data % 4, kind, false')] : [];
+      const opp = has(part, 'opponentNoteHit') ? [P('opponentNoteHit', '0, note.data % 4, kind, false')] : [];
+      if (good.length && opp.length) l.push('if (note.getMustHitNote())', '{', IND + good[0], '}', 'else', '{', IND + opp[0], '}');
+      else if (good.length) l.push('if (note.getMustHitNote()) ' + good[0]);
+      else l.push('if (!note.getMustHitNote()) ' + opp[0]);
     }
-    {
-      const body = [];
-      parts.forEach((p) => defines(p, 'onSongStart') && body.push(call(p, 'onSongStart')));
-      add('onSongStart', 'event:ScriptEvent', body);
+    add('onNoteHit', l.splice(0));
+
+    if (has(part, 'noteMiss')) {
+      l.push('var note = event.note.noteData;');
+      l.push('if (note.getMustHitNote()) ' + P('noteMiss', '0, note.data % 4, note.kind == null ? "" : note.kind, false'));
     }
-    {
-      const body = [];
-      parts.forEach((p) => defines(p, 'onEndSong') && body.push(call(p, 'onEndSong')));
-      add('onSongEnd', 'event:ScriptEvent', body);
+    add('onNoteMiss', l.splice(0));
+
+    if (has(part, 'noteMissPress')) l.push(P('noteMissPress', 'event.dir'));
+    add('onNoteGhostMiss', l.splice(0));
+
+    if (has(part, 'onSpawnNote')) {
+      l.push('var note = event.note.noteData;');
+      l.push(P('onSpawnNote', '0, note.data % 4, note.kind == null ? "" : note.kind, false'));
     }
-    {
-      const body = [];
-      parts.forEach((p) => {
-        if (defines(p, 'onStartCountdown')) {
-          body.push('    if (' + p.prefix + 'onStartCountdown() == Function_Stop) { event.cancel(); }');
-        }
-        if (defines(p, 'onCountdownStarted')) body.push(call(p, 'onCountdownStarted'));
-      });
-      add('onCountdownStart', 'event:CountdownScriptEvent', body);
+    add('onNoteIncoming', l.splice(0));
+
+    if (has(part, 'onEvent')) {
+      l.push('var value = event.eventData.value;');
+      l.push('if (value != null && Reflect.isObject(value) && Reflect.hasField(value, "value1"))');
+      l.push('{');
+      l.push(IND + P('onEvent', 'event.eventData.eventKind, value.value1, value.value2'));
+      l.push('}');
     }
-    {
-      const body = [];
-      const tick = partsWith(parts, 'onCountdownTick');
-      if (tick.length) {
-        body.push("    var __tk = Std.string(event.step);");
-        body.push("    var __n = __tk == 'THREE' ? 0 : (__tk == 'TWO' ? 1 : (__tk == 'ONE' ? 2 : (__tk == 'GO' ? 3 : -1)));");
-        body.push('    if (__n >= 0) {');
-        tick.forEach((p) => body.push('  ' + call(p, 'onCountdownTick', '__n')));
-        body.push('    }');
-      }
-      add('onCountdownStep', 'event:CountdownScriptEvent', body);
-    }
-    {
-      const good = partsWith(parts, 'goodNoteHit');
-      const opp = partsWith(parts, 'opponentNoteHit');
-      const body = [];
-      if (good.length || opp.length) {
-        body.push('    var __nd = event.note.noteData;');
-        body.push("    var __kind = __nd.kind == null ? '' : __nd.kind;");
-        body.push('    var __dir = __nd.data % 4;');
-        body.push('    if (__nd.getStrumlineIndex() == 0) {');
-        good.forEach((p) => body.push('  ' + call(p, 'goodNoteHit', '0, __dir, __kind, false')));
-        body.push('    } else {');
-        opp.forEach((p) => body.push('  ' + call(p, 'opponentNoteHit', '0, __dir, __kind, false')));
-        body.push('    }');
-      }
-      add('onNoteHit', 'event:HitNoteScriptEvent', body);
-    }
-    {
-      const miss = partsWith(parts, 'noteMiss');
-      const body = [];
-      if (miss.length) {
-        body.push('    var __nd = event.note.noteData;');
-        body.push("    var __kind = __nd.kind == null ? '' : __nd.kind;");
-        body.push('    if (__nd.getStrumlineIndex() == 0) {');
-        miss.forEach((p) => body.push('  ' + call(p, 'noteMiss', '0, __nd.data % 4, __kind, false')));
-        body.push('    }');
-      }
-      add('onNoteMiss', 'event:NoteScriptEvent', body);
-    }
-    {
-      const body = [];
-      partsWith(parts, 'noteMissPress').forEach((p) => body.push(call(p, 'noteMissPress', 'Std.int(event.dir)')));
-      add('onNoteGhostMiss', 'event:GhostMissNoteScriptEvent', body);
-    }
-    {
-      const body = [];
-      partsWith(parts, 'onSpawnNote').forEach((p) => {
-        body.push("    var __nd2 = event.note.noteData;");
-        body.push(call(p, 'onSpawnNote', "0, __nd2.data % 4, (__nd2.kind == null ? '' : __nd2.kind), false"));
-      });
-      add('onNoteIncoming', 'event:NoteScriptEvent', body);
-    }
-    {
-      const ev = partsWith(parts, 'onEvent');
-      const body = [];
-      if (ev.length) {
-        body.push('    var __v = event.eventData.value;');
-        body.push("    if (__v != null && Reflect.isObject(__v) && Reflect.hasField(__v, 'value1')) {");
-        ev.forEach((p) => body.push('  ' + call(p, 'onEvent', "event.eventData.eventKind, Reflect.field(__v, 'value1'), Reflect.field(__v, 'value2')")));
-        body.push('    }');
-      }
-      add('onSongEvent', 'event:SongEventScriptEvent', body);
-    }
-    {
-      const body = [];
-      partsWith(parts, 'onGameOver').forEach((p) => body.push('    if (' + p.prefix + 'onGameOver() == Function_Stop) { event.cancel(); }'));
-      add('onGameOver', 'event:ScriptEvent', body);
-    }
-    {
-      const body = [];
-      partsWith(parts, 'onPause').forEach((p) => body.push(call(p, 'onPause')));
-      add('onPause', 'event:PauseScriptEvent', body);
-    }
-    {
-      const body = [];
-      partsWith(parts, 'onResume').forEach((p) => body.push(call(p, 'onResume')));
-      add('onResume', 'event:ScriptEvent', body);
-    }
-    return methods.join('\n\n');
+    add('onSongEvent', l.splice(0));
+
+    if (has(part, 'onGameOver')) l.push('if (' + fn(part, 'onGameOver') + '() == "##PSYCHLUA_FUNCTIONSTOP") event.cancel();');
+    add('onGameOver', l.splice(0));
+
+    if (has(part, 'onPause')) l.push(P('onPause'));
+    add('onPause', l.splice(0));
+    if (has(part, 'onResume')) l.push(P('onResume'));
+    add('onResume', l.splice(0));
+    return out;
   }
 
-  function hooks(parts) {
-    const each = (name, args) => partsWith(parts, name).map((p) => '    ' + p.prefix + name + '(' + args + ');').join('\n');
-    return [
-      '  function __hook_onTweenCompleted(tag) {\n' + each('onTweenCompleted', 'tag') + '\n  }',
-      '  function __hook_onTimerCompleted(tag, loops, loopsLeft) {\n' + each('onTimerCompleted', 'tag, loops, loopsLeft') + '\n  }',
-      '  function __hook_onEvent(name, v1, v2) {\n' + each('onEvent', 'name, v1, v2') + '\n  }',
+  function header(label, source) {
+    return '// Converted from Psych Engine Lua by fnf-mod-converter (' + label + ').\n// Source: ' + source + '\n// Best-effort port: review it before shipping, and keep the original script for reference.\n';
+  }
+
+  function render(head, imports, classLine, body) {
+    return head + '\n' + imports + '\n\n' + classLine + '\n{\n' + body + '\n}\n';
+  }
+
+  /**
+   * class X extends Module. `guard`: {songId} | {stageId} | null.
+   */
+  function buildModule({ className, moduleId, part, source, guard, label }) {
+    const m = members(part);
+    const closed = m.fields.has('__closed');
+    let guardLines = [];
+    if (guard && guard.songId) guardLines = [IND.repeat(2) + 'if (state.currentSong == null || state.currentSong.id != ' + q(guard.songId) + ') return false;'];
+    else if (guard && guard.stageId) guardLines = [IND.repeat(2) + 'if (state.currentStageId != ' + q(guard.stageId) + ') return false;'];
+    const reset = resetLines(m.fields);
+    const ready = [
+      IND + 'var __state = null;',
+      '',
+      IND + '// Psych runs onCreate once per song; a Module has no such event, so it starts when the stage is ready.',
+      IND + 'function __ready()',
+      IND + '{',
+      IND.repeat(2) + 'var state = PlayState.instance;',
+      IND.repeat(2) + 'if (state == null)',
+      IND.repeat(2) + '{',
+      IND.repeat(3) + '__state = null;',
+      IND.repeat(3) + 'return false;',
+      IND.repeat(2) + '}',
+      ...guardLines,
+      IND.repeat(2) + 'if (__state != state)',
+      IND.repeat(2) + '{',
+      IND.repeat(3) + 'if (state.currentStage == null) return false;',
+      IND.repeat(3) + '__state = state;',
+      ...reset,
+      ...initLines(part, 3),
+      IND.repeat(2) + '}',
+      IND.repeat(2) + 'return ' + (closed ? '!__closed' : 'true') + ';',
+      IND + '}',
     ].join('\n');
-  }
-
-  const resetState = '    __luaSprites = {};\n    __luaTexts = {};\n    __luaTimers = {};\n    __luaTweens = {};\n    __luaVars = {};\n    __closed = false;';
-
-  function initCalls(parts) {
-    const lines = [];
-    parts.forEach((p) => {
-      lines.push('    ' + p.mainFn + '();');
-      if (defines(p, 'onCreate')) lines.push(call(p, 'onCreate'));
-      if (defines(p, 'onCreatePost')) lines.push(call(p, 'onCreatePost'));
-    });
-    return lines.join('\n');
-  }
-
-  function header(label, sources) {
-    return (
-      '// Auto-generated by fnf-mod-converter (' + label + ').\n' +
-      '// Source: ' + sources.join(', ') + '\n' +
-      "// Psych Engine Lua -> V-Slice HScript. Best-effort translation: review before shipping, and keep the original script for reference.\n"
-    );
-  }
-
-  function membersOf(parts) {
-    return parts.map((p) => p.members).join('\n\n');
-  }
-
-  /** class X extends Song */
-  function buildSong({ className, songId, parts, sources }) {
-    const shared = sharedSection(parts);
-    const create =
-      '  override function onCreate(event:ScriptEvent):Void {\n    super.onCreate(event);\n' + resetState + '\n    lua_refresh();\n' + initCalls(parts) + '\n  }';
-    return (
-      header('song "' + songId + '"', sources) +
-      importLines(shared.imports, ['funkin.play.song.Song']) + '\n\n' +
-      'class ' + className + ' extends Song {\n' +
-      '  function new() {\n    super(' + q(songId) + ');\n  }\n\n' +
-      shared.code + '\n' + hooks(parts) + '\n\n' + membersOf(parts) + '\n\n' + create + '\n\n' +
-      dispatchers(parts, { callSuper: true, guard: false, kind: 'song' }) + '\n}\n'
-    );
-  }
-
-  /** class X extends Module (global scripts) */
-  function buildModule({ className, moduleId, parts, sources, songIds }) {
-    const shared = sharedSection(parts);
-    const filter = songIds && songIds.length
-      ? '    var __sid = ps.currentSong == null ? \'\' : ps.currentSong.id;\n    if (' + songIds.map((s) => '__sid != ' + q(s)).join(' && ') + ') return false;\n'
-      : '';
-    const ensure =
-      '  var __ps = null;\n' +
-      '  function __ensure() {\n    var ps = PlayState.instance;\n    if (ps == null) { __ps = null; return false; }\n' + filter +
-      '    if (__ps != ps) {\n      if (ps.currentStage == null) return false;\n      __ps = ps;\n' + resetState + '\n      lua_refresh();\n' + initCalls(parts).replace(/^/gm, '  ') + '\n    }\n    return !__closed;\n  }';
-    return (
-      header('global script "' + moduleId + '"', sources) +
-      importLines(shared.imports, ['funkin.modding.module.Module']) + '\n\n' +
-      'class ' + className + ' extends Module {\n' +
-      '  function new() {\n    super(' + q(moduleId) + ', 1000, {state: PlayState});\n  }\n\n' +
-      shared.code + '\n' + hooks(parts) + '\n\n' + membersOf(parts) + '\n\n' + ensure + '\n\n' +
-      dispatchers(parts, { callSuper: false, guard: true, kind: 'module' }) + '\n}\n'
-    );
-  }
-
-  /** class X extends Stage */
-  function buildStage({ className, stageId, parts, sources }) {
-    const shared = sharedSection(parts);
-    const create =
-      '  override function onCreate(event:ScriptEvent):Void {\n    super.onCreate(event);\n' + resetState + '\n    lua_refresh();\n' + initCalls(parts) + '\n  }';
-    return (
-      header('stage "' + stageId + '"', sources) +
-      importLines(shared.imports, ['funkin.play.stage.Stage']) + '\n\n' +
-      'class ' + className + ' extends Stage {\n' +
-      '  function new() {\n    super(' + q(stageId) + ');\n  }\n\n' +
-      shared.code + '\n' + hooks(parts) + '\n\n' + membersOf(parts) + '\n\n' + create + '\n\n' +
-      dispatchers(parts, { callSuper: true, guard: false, kind: 'stage' }) + '\n}\n'
-    );
+    const ctor = IND + 'function new()\n' + IND + '{\n' + IND.repeat(2) + 'super(' + q(moduleId) + ');\n' + IND + '}';
+    const hs = handlers(part, 'if (!__ready()) return;');
+    const body = assemble(m, ctor, ready, hs.join('\n\n'));
+    const imports = importsFor(body, ['funkin.modding.module.Module']);
+    return render(header(label || 'script "' + moduleId + '"', source), imports, 'class ' + className + ' extends Module', body);
   }
 
   /** class X extends SongEvent: a Psych custom event (custom_events/<name>.lua). */
-  function buildEvent({ className, eventName, part, sources }) {
-    const shared = sharedSection([part]);
-    const handle =
-      '  var __inited = false;\n' +
-      '  var __ps = null;\n' +
-      '  override function handleEvent(data:SongEventData):Void {\n' +
-      '    var ps = PlayState.instance;\n' +
-      '    if (ps == null) return;\n' +
-      '    if (__ps != ps) {\n      __ps = ps;\n' + resetState + '\n      lua_refresh();\n      ' + part.mainFn + '();\n' + (defines(part, 'onCreate') ? '      ' + part.prefix + 'onCreate();\n' : '') + (defines(part, 'onCreatePost') ? '      ' + part.prefix + 'onCreatePost();\n' : '') + '    }\n' +
-      '    lua_refresh();\n' +
-      '    var v = data.value;\n' +
-      "    var v1 = v == null ? null : Reflect.field(v, 'value1');\n" +
-      "    var v2 = v == null ? null : Reflect.field(v, 'value2');\n" +
-      '    ' + part.prefix + 'onEvent(' + q(eventName) + ', v1, v2);\n' +
-      '  }\n\n' +
-      '  override function getEventSchema():SongEventSchema {\n' +
-      '    return new SongEventSchema([\n' +
-      "      {name: 'value1', title: 'Value 1', type: SongEventFieldType.STRING, defaultValue: ''},\n" +
-      "      {name: 'value2', title: 'Value 2', type: SongEventFieldType.STRING, defaultValue: ''}\n" +
-      '    ]);\n  }';
-    return (
-      header('custom event "' + eventName + '"', sources) +
-      importLines(shared.imports, ['funkin.play.event.SongEvent', 'funkin.data.song.SongData.SongEventData', 'funkin.data.event.SongEventSchema', 'funkin.data.event.SongEventSchema.SongEventFieldType']) + '\n\n' +
-      'class ' + className + ' extends SongEvent {\n' +
-      '  function new() {\n    super(' + q(eventName) + ');\n  }\n\n' +
-      shared.code + '\n' + hooks([part]) + '\n\n' + part.members + '\n\n' + handle + '\n}\n'
-    );
+  function buildEvent({ className, eventName, part, source }) {
+    const m = members(part);
+    const reset = resetLines(m.fields).map((x) => x.replace(IND.repeat(3), IND.repeat(3)));
+    const handle = [
+      IND + 'var __state = null;',
+      '',
+      IND + 'function handleEvent(data)',
+      IND + '{',
+      IND.repeat(2) + 'var state = PlayState.instance;',
+      IND.repeat(2) + 'if (state == null) return;',
+      IND.repeat(2) + 'if (__state != state)',
+      IND.repeat(2) + '{',
+      IND.repeat(3) + '__state = state;',
+      ...reset,
+      ...initLines(part, 3),
+      IND.repeat(2) + '}',
+      IND.repeat(2) + 'var value = data.value;',
+      IND.repeat(2) + 'var value1 = value == null ? "" : value.value1;',
+      IND.repeat(2) + 'var value2 = value == null ? "" : value.value2;',
+      IND.repeat(2) + fn(part, 'onEvent') + '(' + q(eventName) + ', value1, value2);',
+      IND + '}',
+      '',
+      IND + 'function getEventSchema()',
+      IND + '{',
+      IND.repeat(2) + 'return new SongEventSchema([',
+      IND.repeat(3) + '{name: "value1", title: "Value 1", type: SongEventFieldType.STRING, defaultValue: ""},',
+      IND.repeat(3) + '{name: "value2", title: "Value 2", type: SongEventFieldType.STRING, defaultValue: ""}',
+      IND.repeat(2) + ']);',
+      IND + '}',
+    ].join('\n');
+    const ctor = IND + 'function new()\n' + IND + '{\n' + IND.repeat(2) + 'super(' + q(eventName) + ');\n' + IND + '}';
+    const body = assemble(m, ctor, handle);
+    const imports = importsFor(body, ['funkin.play.event.SongEvent', 'funkin.data.event.SongEventSchema', 'funkin.data.event.SongEventSchema.SongEventFieldType']);
+    return render(header('custom event "' + eventName + '"', source), imports, 'class ' + className + ' extends SongEvent', body);
   }
 
   /** class X extends NoteKind: a Psych custom note type (custom_notetypes/<name>.lua). */
-  function buildNoteKind({ className, kindId, part, sources }) {
-    const shared = sharedSection([part]);
+  function buildNoteKind({ className, kindId, part, source }) {
+    const m = members(part);
+    const reset = resetLines(m.fields);
+    const boot = [
+      IND + 'var __state = null;',
+      '',
+      IND + 'function __boot()',
+      IND + '{',
+      IND.repeat(2) + 'var state = PlayState.instance;',
+      IND.repeat(2) + 'if (state == null || __state == state) return;',
+      IND.repeat(2) + '__state = state;',
+      ...reset.map((x) => x.replace(IND.repeat(3), IND.repeat(2))),
+      ...initLines(part, 2),
+      IND + '}',
+    ].join('\n');
     const sides = [];
-    if (defines(part, 'goodNoteHit') || defines(part, 'opponentNoteHit')) {
-      sides.push(
-        '  override function onNoteHit(event:HitNoteScriptEvent):Void {\n' +
-          '    super.onNoteHit(event);\n    __boot();\n    lua_refresh();\n' +
-          '    var __nd = event.note.noteData;\n    var __dir = __nd.data % 4;\n' +
-          '    if (__nd.getStrumlineIndex() == 0) {\n' + (defines(part, 'goodNoteHit') ? '  ' + call(part, 'goodNoteHit', '0, __dir, noteKind, false') : '') + '\n    } else {\n' +
-          (defines(part, 'opponentNoteHit') ? '  ' + call(part, 'opponentNoteHit', '0, __dir, noteKind, false') : '') + '\n    }\n  }'
-      );
+    if (has(part, 'goodNoteHit') || has(part, 'opponentNoteHit')) {
+      const l = [IND.repeat(2) + 'super.onNoteHit(event);', IND.repeat(2) + '__boot();', IND.repeat(2) + 'var note = event.note.noteData;'];
+      if (has(part, 'goodNoteHit')) l.push(IND.repeat(2) + 'if (note.getMustHitNote()) ' + fn(part, 'goodNoteHit') + '(0, note.data % 4, noteKind, false);');
+      if (has(part, 'opponentNoteHit')) l.push(IND.repeat(2) + 'if (!note.getMustHitNote()) ' + fn(part, 'opponentNoteHit') + '(0, note.data % 4, noteKind, false);');
+      sides.push(IND + 'function onNoteHit(event)\n' + IND + '{\n' + l.join('\n') + '\n' + IND + '}');
     }
-    if (defines(part, 'noteMiss')) {
-      sides.push(
-        '  override function onNoteMiss(event:NoteScriptEvent):Void {\n    super.onNoteMiss(event);\n    __boot();\n    lua_refresh();\n' +
-          '    ' + part.prefix + 'noteMiss(0, event.note.noteData.data % 4, noteKind, false);\n  }'
-      );
+    if (has(part, 'noteMiss')) {
+      sides.push(IND + 'function onNoteMiss(event)\n' + IND + '{\n' + IND.repeat(2) + 'super.onNoteMiss(event);\n' + IND.repeat(2) + '__boot();\n' + IND.repeat(2) + fn(part, 'noteMiss') + '(0, event.note.noteData.data % 4, noteKind, false);\n' + IND + '}');
     }
-    const boot =
-      '  var __ps = null;\n  function __boot() {\n    var ps = PlayState.instance;\n    if (ps == null || __ps == ps) return;\n    __ps = ps;\n' + resetState + '\n    lua_refresh();\n    ' + part.mainFn + '();\n' + (defines(part, 'onCreate') ? '    ' + part.prefix + 'onCreate();\n' : '') + (defines(part, 'onCreatePost') ? '    ' + part.prefix + 'onCreatePost();\n' : '') + '  }';
-    return (
-      header('custom note type "' + kindId + '"', sources) +
-      importLines(shared.imports, ['funkin.play.notes.notekind.NoteKind']) + '\n\n' +
-      'class ' + className + ' extends NoteKind {\n' +
-      '  function new() {\n    super(' + q(kindId) + ', ' + q(kindId) + ');\n  }\n\n' +
-      shared.code + '\n' + hooks([part]) + '\n\n' + part.members + '\n\n' + boot + '\n\n' + sides.join('\n\n') + '\n}\n'
-    );
+    const ctor = IND + 'function new()\n' + IND + '{\n' + IND.repeat(2) + 'super(' + q(kindId) + ', ' + q(kindId) + ');\n' + IND + '}';
+    const body = assemble(m, ctor, boot, sides.join('\n\n'));
+    const imports = importsFor(body, ['funkin.play.notes.notekind.NoteKind']);
+    return render(header('custom note type "' + kindId + '"', source), imports, 'class ' + className + ' extends NoteKind', body);
   }
 
-  C.scriptGen = { buildSong, buildModule, buildStage, buildEvent, buildNoteKind, pascal };
+  C.scriptGen = { buildModule, buildEvent, buildNoteKind, pascal, importsFor };
 })(typeof window !== 'undefined' ? window : globalThis);

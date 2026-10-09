@@ -5,7 +5,7 @@ const os = require('os');
 const { spawnSync } = require('child_process');
 
 const JSZip = require(path.join(__dirname, '..', 'js', 'vendor', 'jszip.min.js'));
-['util', 'xml', 'lua', 'psych-shim', 'psych-lua', 'script-gen', 'songs', 'characters', 'stages', 'weeks', 'psych-scripts', 'codename', 'codename-hx', 'converter'].forEach((f) =>
+['util', 'xml', 'lua', 'psych-api', 'psych-lua', 'script-gen', 'songs', 'characters', 'stages', 'weeks', 'psych-scripts', 'codename', 'codename-hx', 'converter'].forEach((f) =>
   require(path.join(__dirname, '..', 'js', f + '.js'))
 );
 const C = globalThis.FNFConv;

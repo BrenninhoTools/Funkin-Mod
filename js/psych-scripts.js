@@ -1,11 +1,11 @@
 /*
- * Psych Engine script conversion (Lua -> V-Slice HScript classes).
+ * Psych Engine script conversion (Lua -> V-Slice HScript classes). One Lua file becomes one class:
  *
- *   scripts/**.lua                 -> Module (runs in every song)       scripts/global/<name>.hxc
- *   data/<song>/*.lua              -> Song class                         scripts/songs/<song>.hxc
- *   stages/<stage>.lua (dynamic)   -> Stage class                        scripts/stages/<stage>.hxc
- *   custom_events/<name>.lua       -> SongEvent class                    scripts/events/<name>.hxc
- *   custom_notetypes/<name>.lua    -> NoteKind class                     scripts/notekinds/<name>.hxc
+ *   scripts/**.lua                 -> Module (runs in every song)             scripts/global/<name>.hxc
+ *   data/<song>/*.lua              -> Module that only runs in that song      scripts/songs/<song>-<name>.hxc
+ *   stages/<stage>.lua (dynamic)   -> Module that only runs on that stage     scripts/stages/<stage>.hxc
+ *   custom_events/<name>.lua       -> SongEvent                               scripts/events/<name>.hxc
+ *   custom_notetypes/<name>.lua    -> NoteKind                                scripts/notekinds/<name>.hxc
  *
  * Two phases so the chart converter can know about events the scripts handle:
  *   prepare(ctx)  translate everything and compute ctx.passEvents
@@ -29,11 +29,11 @@
     part.warnings.forEach((w) => report.warn(label + ': ' + w));
     if (part.unsupported.size) {
       const list = [...part.unsupported].map(([k, n]) => k + ' x' + n).join(', ');
-      report.warn(label + ': Psych functions with no V-Slice equivalent (calls replaced by a no-op): ' + list);
+      report.warn(label + ': Psych functions with no V-Slice equivalent (calls replaced by a no-op that logs a message): ' + list);
     }
   }
 
-  async function translateFile(fs, path, prefix, opts, report) {
+  async function translateFile(fs, path, opts, report) {
     let src;
     try {
       src = await fs.text(path);
@@ -42,7 +42,7 @@
       return null;
     }
     try {
-      const part = C.psychLua.translate(src, Object.assign({ prefix }, opts || {}));
+      const part = C.psychLua.translate(src, opts || {});
       part.path = path;
       summarize(report, path, part);
       return part;
@@ -58,9 +58,8 @@
     const plan = { global: [], songs: new Map(), stages: new Map(), events: [], kinds: [], handled: new Set() };
     const passNames = new Set();
     let passAll = false;
-    const tf = translateFile;
-    const translate = async (path, prefix, opts) => {
-      const part = await tf(fs, path, prefix, opts, report);
+    const translate = async (path, opts) => {
+      const part = await translateFile(fs, path, opts, report);
       if (part) plan.handled.add(path);
       return part;
     };
@@ -68,19 +67,15 @@
       if (part.callbacks.has('onEvent')) passAll = true;
     };
 
-    const luaFiles = fs.paths.filter((p) => /\.lua$/i.test(p));
-    let idx = 0;
-    for (const p of luaFiles) {
-      const lower = p.toLowerCase();
-      const parts = lower.split('/');
+    for (const p of fs.paths.filter((x) => /\.lua$/i.test(x))) {
+      const parts = p.toLowerCase().split('/');
       const top = parts[0];
-      const prefix = 's' + idx++ + '_';
 
       if (top === 'scripts') {
-        const part = await translate(p, prefix, null);
+        const part = await translate(p);
         if (part) { plan.global.push({ path: p, part }); noteEvent(part); }
       } else if (top === 'custom_events') {
-        const part = await translate(p, prefix, null);
+        const part = await translate(p);
         if (!part) continue;
         if (!part.callbacks.has('onEvent')) report.warn(p + ': custom event script does not define onEvent(name, value1, value2); skipped');
         else {
@@ -90,7 +85,7 @@
           part.callbacks.forEach((v, k) => !['onEvent', 'onCreate', 'onCreatePost', 'onTimerCompleted', 'onTweenCompleted'].includes(k) && report.warn(p + ': callback "' + k + '" in a custom event is ignored'));
         }
       } else if (top === 'custom_notetypes') {
-        const part = await translate(p, prefix, null);
+        const part = await translate(p);
         if (part) plan.kinds.push({ path: p, name: fileId(p), part });
       } else if (top === 'stages' && parts.length === 2) {
         const stageId = fileId(p);
@@ -100,19 +95,19 @@
         } catch (e) {
           /* reported by the translation below */
         }
-        const skipCall = (fn, arg, top) => {
-          if (!SETUP.has(top) || !STATIC_STAGE_FNS.has(fn) || arg == null) return false;
+        const skipCall = (fn, arg, topFn) => {
+          if (!SETUP.has(topFn) || !STATIC_STAGE_FNS.has(fn) || arg == null) return false;
           const [tag, prop] = String(arg).split('.');
           return tags.has(tag) && (fn !== 'setProperty' || STATIC_PROPS.has(prop));
         };
-        const part = await translate(p, prefix, { skipCall });
+        const part = await translate(p, { skipCall, staticTags: tags });
         if (part) {
           plan.stages.set(stageId, { path: p, part });
           noteEvent(part);
         }
       } else if (top === 'data' && parts.length === 3) {
         const folder = C.baseName(C.dirName(p));
-        const part = await translate(p, prefix, null);
+        const part = await translate(p);
         if (part) {
           if (!plan.songs.has(folder)) plan.songs.set(folder, []);
           plan.songs.get(folder).push({ path: p, part });
@@ -138,32 +133,41 @@
     if (!plan) return;
     const base = C.pascal(modId);
     let count = 0;
+    const used = new Set();
     const put = (path, text) => {
       out.text(path, text);
       count++;
     };
+    const unique = (name) => {
+      let n = name;
+      let i = 2;
+      while (used.has(n)) n = name + i++;
+      used.add(n);
+      return n;
+    };
 
-    // Global scripts -> one Module each
-    plan.global.forEach(({ path, part }, i) => {
+    // Global scripts -> one Module each (runs in every song)
+    for (const { path, part } of plan.global) {
       const id = C.slugId(path.replace(/^scripts\//i, '').replace(/\.lua$/i, ''));
-      put('scripts/global/' + id + '.hxc', C.scriptGen.buildModule({
-        className: base + C.pascal(id) + 'Script', moduleId: modId + '-' + id, parts: [part], sources: [path],
-      }));
-    });
+      const cls = unique(base + C.pascal(id));
+      put('scripts/global/' + id + '.hxc', C.scriptGen.buildModule({ className: cls, moduleId: cls, part, source: path, guard: null, label: 'global script' }));
+    }
 
-    // Song scripts
+    // Song scripts -> Modules that only run in their song
     for (const [folder, items] of plan.songs) {
       const songId = C.formatToSongPath(folder);
       if (!songInfos.some((s) => s.id === songId)) {
         report.warn('Lua scripts in data/' + folder + '/ belong to a song with no converted chart; skipped');
         continue;
       }
-      put('scripts/songs/' + songId + '.hxc', C.scriptGen.buildSong({
-        className: base + C.pascal(songId) + 'Song', songId, parts: items.map((x) => x.part), sources: items.map((x) => x.path),
-      }));
+      for (const { path, part } of items) {
+        const id = C.slugId(songId + '-' + fileId(path));
+        const cls = unique(base + C.pascal(id));
+        put('scripts/songs/' + id + '.hxc', C.scriptGen.buildModule({ className: cls, moduleId: cls, part, source: path, guard: { songId }, label: 'script for song "' + songId + '"' }));
+      }
     }
 
-    // Stage scripts
+    // Stage scripts (their dynamic part) -> Modules that only run on that stage
     for (const [stageId, { path, part }] of plan.stages) {
       const dynamic = part.callbacks.size > 0 || part.hasMainStatements;
       if (!dynamic) continue;
@@ -171,22 +175,19 @@
         report.warn(path + ': stage script has no stages/' + stageId + '.json, skipped');
         continue;
       }
-      put('scripts/stages/' + stageId + '.hxc', C.scriptGen.buildStage({
-        className: base + C.pascal(stageId) + 'Stage', stageId, parts: [part], sources: [path],
-      }));
+      const cls = unique(base + C.pascal(stageId) + 'Stage');
+      put('scripts/stages/' + C.slugId(stageId) + '.hxc', C.scriptGen.buildModule({ className: cls, moduleId: cls, part, source: path, guard: { stageId }, label: 'script for stage "' + stageId + '"' }));
     }
 
     // Custom events and note kinds
-    plan.events.forEach(({ path, name, part }) => {
-      put('scripts/events/' + C.slugId(name) + '.hxc', C.scriptGen.buildEvent({
-        className: base + C.pascal(name) + 'Event', eventName: name, part, sources: [path],
-      }));
-    });
-    plan.kinds.forEach(({ path, name, part }) => {
-      put('scripts/notekinds/' + C.slugId(name) + '.hxc', C.scriptGen.buildNoteKind({
-        className: base + C.pascal(name) + 'NoteKind', kindId: name, part, sources: [path],
-      }));
-    });
+    for (const { path, name, part } of plan.events) {
+      const cls = unique(base + C.pascal(name) + 'Event');
+      put('scripts/events/' + C.slugId(name) + '.hxc', C.scriptGen.buildEvent({ className: cls, eventName: name, part, source: path }));
+    }
+    for (const { path, name, part } of plan.kinds) {
+      const cls = unique(base + C.pascal(name) + 'NoteKind');
+      put('scripts/notekinds/' + C.slugId(name) + '.hxc', C.scriptGen.buildNoteKind({ className: cls, kindId: name, part, source: path }));
+    }
 
     if (count) report.count('Scripts converted (Lua -> HScript)', count);
   }

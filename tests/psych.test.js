@@ -304,30 +304,42 @@ async function run(t) {
   assert.strictEqual(lv.props.length, 3);
   assert.deepStrictEqual(lv.props[0].offsets, [150, 40]);
 
-  // --- scripts (Lua -> HScript)
-  const song = await readText(re, M + 'scripts/songs/test-song.hxc');
-  assert(/class CoolModTestSongSong extends Song/.test(song));
-  assert(/super\("test-song"\)/.test(song));
-  assert(/function s\d+_onBeatHit\(\)/.test(song));
-  assert(/override function onNoteHit\(event:HitNoteScriptEvent\)/.test(song));
-  assert(/override function onSongEvent/.test(song));
-  assert(/if \(s\d+_onStartCountdown\(\) == Function_Stop\) \{ event.cancel\(\); \}/.test(song));
-  assert(/function makeLuaSprite\(/.test(song), 'shim functions are pasted in');
-  assert(!/function cameraFlash\(/.test(song), 'unused shim functions are not');
+  // --- scripts (Lua -> HScript): idiomatic V-Slice Modules / SongEvent / NoteKind, no emulation layer
+  const inc = (text, str, msg) => assert(text.includes(str), (msg || 'expected: ') + str);
+  const song = await readText(re, M + 'scripts/songs/test-song-modchart.hxc');
+  inc(song, 'class CoolModTestSongModchart extends Module');
+  inc(song, 'super("CoolModTestSongModchart")');
+  inc(song, 'state.currentSong.id != "test-song"', 'song scripts only run in their song: ');
+  inc(song, 'function luaOnBeatHit()');
+  inc(song, 'function onNoteHit(event)');
+  inc(song, 'note.getMustHitNote()');
+  inc(song, 'function onSongEvent(event)');
+  inc(song, 'if (luaOnStartCountdown() == "##PSYCHLUA_FUNCTIONSTOP") event.cancel();');
+  inc(song, 'spr_flash = new FunkinSprite(0, 0);', 'Psych calls become direct V-Slice code: ');
+  inc(song, 'PlayState.instance.currentStage.add(spr_flash);');
+  assert(!/override |\{state: PlayState\}|shim/i.test(song.replace(/^\/\/.*$/gm, '')), 'no overrides, no emulation layer');
+  assert(!/function makeLuaSprite|function cameraFlash/.test(song));
   const glob = await readText(re, M + 'scripts/global/global.hxc');
-  assert(/class CoolModGlobalScript extends Module/.test(glob));
-  assert(/if \(!__ensure\(\)\) return;/.test(glob));
+  inc(glob, 'class CoolModGlobal extends Module');
+  inc(glob, 'if (!__ready()) return;');
+  inc(glob, 'FlxG.keys.justPressed.SPACE');
+  inc(glob, 'PlayState.instance.songScore += 10;');
   const stg = await readText(re, M + 'scripts/stages/coolstage.hxc');
-  assert(/class CoolModCoolstageStage extends Stage/.test(stg));
-  assert(!/makeLuaSprite\("bg"/.test(stg), 'static props are not recreated at runtime');
-  assert(/makeLuaSprite\("dyn"/.test(stg), 'dynamic ones still are');
+  inc(stg, 'class CoolModCoolstageStage extends Module');
+  inc(stg, 'state.currentStageId != "coolstage"', 'stage scripts only run on their stage: ');
+  assert(!/spr_bg\b/.test(stg), 'static props are not recreated at runtime');
+  inc(stg, 'spr_dyn = FunkinSprite.create(', 'dynamic ones still are: ');
+  inc(stg, 'currentStage.getNamedProp("crowd").angle = 2;', 'static props are reached through the stage: ');
   const evc = await readText(re, M + 'scripts/events/screen-shake.hxc');
-  assert(/class CoolModScreenShakeEvent extends SongEvent/.test(evc));
-  assert(/super\("Screen Shake"\)/.test(evc));
+  inc(evc, 'class CoolModScreenShakeEvent extends SongEvent');
+  inc(evc, 'super("Screen Shake")');
+  inc(evc, 'function handleEvent(data)');
+  inc(evc, 'function getEventSchema()');
   const nk = await readText(re, M + 'scripts/notekinds/hurt-note.hxc');
-  assert(/class CoolModHurtNoteNoteKind extends NoteKind/.test(nk));
-  assert(/super\("Hurt Note"/.test(nk));
+  inc(nk, 'class CoolModHurtNoteNoteKind extends NoteKind');
+  inc(nk, 'super("Hurt Note"');
   assert(!re.file(M + 'scripts/foo.lua') && !re.file(M + 'scripts/global.lua'), 'Lua sources are not copied');
+  assert(!res.report.warnings.some((w) => /Hurt Note/.test(w) && /without a script/.test(w)), 'a converted note type is not reported as scriptless');
 
   // --- tolerant JSON and unusual audio locations
   const lenient = await readJson(re, M + 'data/stages/lenient.json');
@@ -353,8 +365,8 @@ async function run(t) {
   assert.deepStrictEqual(hallo.props[2].position, [440, 260], 'screenCenter on the 400x200 rectangle');
   assert(re.file(M + 'images/stages/cool-mod/solid-ff0000ff.png'));
   const halloScript = await readText(re, M + 'scripts/stages/hallo.hxc');
-  assert(!/makeLuaSprite|makeGraphic|screenCenter|setGraphicSize/.test(halloScript.split('function s')[1] || ''), 'static setup is not repeated at runtime');
-  assert(/setProperty\("bgc.alpha", 0\.5\)/.test(halloScript), 'runtime changes in onBeatHit are kept');
+  assert(!/FunkinSprite|makeSolidColor|screenCenter|setGraphicSize/.test(halloScript), 'static setup is not repeated at runtime');
+  assert(/getNamedProp\("bgc"\)\.alpha = 0\.5;/.test(halloScript), 'runtime changes in onBeatHit are kept');
 
   // --- weeks / misc files
   const w2 = await readJson(re, M + 'data/levels/cool-mod-week2.json');

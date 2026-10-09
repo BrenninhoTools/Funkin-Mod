@@ -49,6 +49,8 @@ class HxRun {
       v.set('FlxSprite', MockSprite);
       v.set('FunkinSound', MockSound);
       v.set('Paths', MockPaths);
+      v.set('Highscore', MockHighscore);
+      v.set('Highscore', MockHighscore);
       v.set('Preferences', MockPrefs);
       v.set('trace', Reflect.makeVarArgs(function(args:Array<Dynamic>) Log.add('trace ' + args.join(' '))));
       try {

@@ -406,8 +406,10 @@
     if (unsupported.size)
       report.warn('Song "' + id + '": events with no equivalent (ignored): ' + [...unsupported].map(([k, n]) => k + ' x' + n).join(', '));
     if (gfSing) report.warn('Song "' + id + '": ' + gfSing + ' "GF Sing" note(s) became regular opponent notes.');
-    if (customKinds.size)
-      report.warn('Song "' + id + '": custom note types kept as "kind" but without a script: ' + [...customKinds].join(', '));
+    const scripted = new Set(((ctx.scriptPlan && ctx.scriptPlan.kinds) || []).map((k) => String(k.name).toLowerCase()));
+    const unscripted = [...customKinds].filter((k) => !scripted.has(k.toLowerCase()));
+    if (unscripted.length)
+      report.warn('Song "' + id + '": custom note types kept as "kind" but without a script: ' + unscripted.join(', '));
 
     // --- Output files -----------------------------------------------------------------
     const difficulties = results.map((r) => r.diff);
