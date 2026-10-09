@@ -10,6 +10,7 @@
     contents: $('contents'), contentsBody: $('contents-body'),
     title: $('opt-title'), id: $('opt-id'), author: $('opt-author'), artist: $('opt-artist'),
     api: $('opt-api'), charter: $('opt-charter'), report: $('opt-report'),
+    engine: $('opt-engine'), engineBadge: $('engine-badge'), scripts: $('opt-scripts'),
     convert: $('btn-convert'),
     progress: $('progress'), bar: $('bar'), progressLabel: $('progress-label'), progressPct: $('progress-pct'),
     resultBody: $('result-body'), banner: $('banner'), bannerIcon: $('banner-icon'), bannerTitle: $('banner-title'), bannerSub: $('banner-sub'),
@@ -24,6 +25,7 @@
   let downloadUrl = null;
   let reportUrl = null;
   let idTouched = false;
+  let lastScan = null;
   let lastResult = null;
 
   /* ---------------- Theme ---------------- */
@@ -93,7 +95,7 @@
       inputZip = await JSZip.loadAsync(file);
       mods = FNFConv.detectMods(inputZip, file.name);
       if (!mods.length) {
-        showLoadError('No Psych Engine mod found in this zip. I looked for a pack.json and the usual folders (weeks, characters, songs, data, images...).');
+        showLoadError('No Psych Engine or Codename Engine mod found in this zip. I looked for pack.json, data/config/modpack.ini and the usual folders (weeks, characters, songs, data, images...).');
         return;
       }
       el.fileName.textContent = file.name;
@@ -156,7 +158,12 @@
 
   async function showMod(i) {
     const mod = mods[i];
-    const scan = await FNFConv.scanMod(inputZip, mod);
+    const scan = await FNFConv.scanMod(inputZip, mod, el.engine.value);
+    lastScan = scan;
+
+    const isCn = scan.engine === 'codename';
+    el.engineBadge.textContent = (el.engine.value === 'auto' ? 'Detected: ' : 'Using: ') + (isCn ? 'Codename Engine' : 'Psych Engine');
+    el.engineBadge.classList.toggle('codename', isCn);
 
     el.tiles.innerHTML = '';
     el.tiles.append(
@@ -166,11 +173,7 @@
       tile('i-calendar', scan.weeks.length, plural(scan.weeks.length, 'week', 'weeks')),
       tile('i-files', scan.fileCount, plural(scan.fileCount, 'file', 'files'))
     );
-
-    el.scriptNotice.hidden = scan.scripts.length === 0;
-    if (scan.scripts.length) {
-      el.scriptNoticeText.textContent = scan.scripts.length + ' Lua/HScript ' + plural(scan.scripts.length, 'file was', 'files were') + ' found. Scripts cannot be converted automatically (stage scenery in Lua is read on a best-effort basis).';
-    }
+    updateScriptNotice();
 
     el.contentsBody.innerHTML = '';
     [group('Songs', scan.songs), group('Characters', scan.characters), group('Stages', scan.stages), group('Weeks', scan.weeks)]
@@ -182,6 +185,17 @@
     idTouched = false;
     el.id.value = FNFConv.slugId(el.title.value);
     el.cardResult.hidden = true;
+  }
+
+  function updateScriptNotice() {
+    const n = lastScan ? lastScan.scripts.length : 0;
+    el.scriptNotice.hidden = n === 0;
+    if (!n) return;
+    const kind = lastScan.engine === 'codename' ? 'HScript (.hx)' : 'Lua / HScript';
+    const what = n + ' ' + kind + ' ' + plural(n, 'script was', 'scripts were') + ' found. ';
+    el.scriptNoticeText.textContent = el.scripts.checked
+      ? what + 'They will be translated to V-Slice HScript on a best-effort basis; review the generated files in scripts/ before shipping. Anything that cannot be translated is listed in the report.'
+      : what + 'Script conversion is turned off, so they will be skipped.';
   }
 
   /* ---------------- Conversion ---------------- */
@@ -229,6 +243,8 @@
         artist: el.artist.value.trim(),
         charter: el.charter.value.trim(),
         apiVersion: el.api.value.trim() || '0.8.0',
+        engine: el.engine.value,
+        convertScripts: el.scripts.checked,
         includeReport: el.report.checked,
         onLog: addLog,
         onProgress: (done, total, label) => setProgress(Math.round((done / total) * 90), label),
@@ -362,6 +378,8 @@
   ['dragleave', 'drop'].forEach((t) => window.addEventListener(t, (e) => { e.preventDefault(); if (t === 'drop' || e.target === document.documentElement) el.drop.classList.remove('over'); }));
   window.addEventListener('drop', (e) => loadFile(e.dataTransfer.files[0]));
   el.pick.addEventListener('change', () => showMod(parseInt(el.pick.value, 10)));
+  el.engine.addEventListener('change', () => showMod(parseInt(el.pick.value || '0', 10)));
+  el.scripts.addEventListener('change', updateScriptNotice);
   el.title.addEventListener('input', () => { if (!idTouched) el.id.value = FNFConv.slugId(el.title.value); });
   el.id.addEventListener('input', () => { idTouched = true; });
   el.convert.addEventListener('click', runConversion);

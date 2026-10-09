@@ -74,10 +74,10 @@
       if (!this.unconverted.has(category)) this.unconverted.set(category, []);
       this.unconverted.get(category).push(path);
     }
-    toMarkdown(modTitle) {
+    toMarkdown(modTitle, engineName) {
       const L = [];
       L.push('# Conversion report: ' + modTitle, '');
-      L.push("Psych Engine -> Friday Night Funkin' (V-Slice / Polymod)", '');
+      L.push((engineName || 'Psych Engine') + " -> Friday Night Funkin' (V-Slice / Polymod)", '');
       L.push('## Summary', '');
       for (const k of Object.keys(this.stats)) L.push('- ' + k + ': ' + this.stats[k]);
       L.push('');

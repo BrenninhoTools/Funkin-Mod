@@ -170,3 +170,11 @@ details > summary { cursor: pointer; font-weight: 600; }
 
 .foot { margin-top: 26px; color: var(--muted); font-size: .86rem; text-align: center; }
 .foot a { color: var(--accent); }
+
+/* ---------- Engine row ---------- */
+.engine-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; font-size: .86rem; font-weight: 650; background: var(--accent-soft); color: var(--ink); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+.badge.codename { background: color-mix(in srgb, var(--k2) 18%, transparent); border-color: color-mix(in srgb, var(--k2) 55%, transparent); }
+.field.inline { flex-direction: row; align-items: center; gap: 8px; }
+.field.inline select { width: auto; }
+.check small { margin-left: 4px; }

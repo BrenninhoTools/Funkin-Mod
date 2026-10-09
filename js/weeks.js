@@ -21,11 +21,31 @@
     return u;
   }
 
+  const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+  /** Story-menu props that already ship with V-Slice (assets/preload/images/storymenu/props/<id>.png). */
+  const BASE_PROPS = {
+    bf: { offsets: [150, 80], animations: [{ name: 'idle', prefix: 'idle0', frameRate: 24 }, { name: 'confirm', prefix: 'confirm0', frameRate: 24 }] },
+    dad: { offsets: [100, 60], animations: [{ name: 'idle', prefix: 'idle0', frameRate: 24 }] },
+    gf: { offsets: [200, 80], animations: [{ name: 'danceLeft', prefix: 'idle0', frameIndices: [30].concat(range(0, 14)) }, { name: 'danceRight', prefix: 'idle0', frameIndices: range(15, 29) }] },
+  };
+  ['spooky', 'pico', 'mom', 'parents-christmas', 'senpai', 'tankman'].forEach((n) => {
+    BASE_PROPS[n] = { offsets: [100, 60], animations: [{ name: 'idle', prefix: 'idle0', frameRate: 24 }] };
+  });
+  function baseProp(name) {
+    const b = BASE_PROPS[String(name).toLowerCase()];
+    return b ? { assetPath: 'storymenu/props/' + String(name).toLowerCase(), scale: 1, offsets: b.offsets.slice(), animations: JSON.parse(JSON.stringify(b.animations)) } : null;
+  }
+
   async function convertMenuCharacter(name, ctx) {
     const { fs, report } = ctx;
     if (!name) return null;
     const jsonPath = fs.resolve('images/menucharacters/' + name + '.json');
     if (!jsonPath) {
+      const base = baseProp(name);
+      if (base) {
+        report.log('Week: menu character "' + name + '" is not in the mod; using the base-game V-Slice prop.');
+        return base;
+      }
       report.warn('Week: menu character "' + name + '" has no images/menucharacters/' + name + '.json; prop skipped.');
       return null;
     }
@@ -127,5 +147,5 @@
     report.count('Extra levels created');
   }
 
-  C.weeks = { convertWeek, buildExtrasLevel };
+  C.weeks = { convertWeek, buildExtrasLevel, baseProp };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FNF Mod Converter</title>
-  <meta name="description" content="Convert Psych Engine mods (.zip) to Friday Night Funkin' V-Slice mods, right in your browser.">
+  <meta name="description" content="Convert Psych Engine and Codename Engine mods (.zip), scripts included, to Friday Night Funkin' V-Slice mods, right in your browser.">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -34,7 +34,7 @@
         </div>
         <div>
           <h1>FNF Mod Converter</h1>
-          <p class="tag">Psych Engine <span class="arrow" aria-hidden="true">&rarr;</span> <span class="sr">to</span> Funkin' V-Slice</p>
+          <p class="tag">Psych &amp; Codename Engine <span class="arrow" aria-hidden="true">&rarr;</span> <span class="sr">to</span> Funkin' V-Slice</p>
         </div>
       </div>
       <button class="icon-btn" id="theme-toggle" type="button" aria-label="Toggle light/dark theme" title="Toggle theme">
@@ -51,7 +51,7 @@
     <!-- 1. Upload -->
     <section class="card" id="card-upload" aria-labelledby="h-upload">
       <h2 id="h-upload">Upload your mod</h2>
-      <p class="lead">Drop the <code>.zip</code> of a Psych Engine mod. Everything is converted locally in your browser; nothing is uploaded anywhere.</p>
+      <p class="lead">Drop the <code>.zip</code> of a Psych Engine or Codename Engine mod. Everything is converted locally in your browser; nothing is uploaded anywhere.</p>
 
       <label class="drop" id="drop" tabindex="0">
         <input type="file" id="file" accept=".zip,application/zip" hidden>
@@ -75,6 +75,18 @@
       <div class="field" id="mod-pick-wrap" hidden>
         <label for="mod-pick">Mod found in the zip</label>
         <select id="mod-pick"></select>
+      </div>
+
+      <div class="engine-row">
+        <span class="badge" id="engine-badge">Detected: Psych Engine</span>
+        <div class="field inline">
+          <label for="opt-engine">Source engine</label>
+          <select id="opt-engine">
+            <option value="auto">Auto-detect</option>
+            <option value="psych">Psych Engine</option>
+            <option value="codename">Codename Engine</option>
+          </select>
+        </div>
       </div>
 
       <div class="tiles" id="tiles"></div>
@@ -107,6 +119,8 @@
           <input id="opt-artist" type="text" autocomplete="off" placeholder="Unknown">
         </div>
       </div>
+
+      <label class="check"><input type="checkbox" id="opt-scripts" checked> Convert scripts (Lua / HScript) to V-Slice HScript <small class="muted">(best effort, review the result)</small></label>
 
       <details class="adv">
         <summary>Advanced</summary>
@@ -181,10 +195,18 @@
 
   <script src="js/vendor/jszip.min.js"></script>
   <script src="js/util.js"></script>
+  <script src="js/xml.js"></script>
+  <script src="js/lua.js"></script>
+  <script src="js/psych-shim.js"></script>
+  <script src="js/psych-lua.js"></script>
+  <script src="js/script-gen.js"></script>
   <script src="js/songs.js"></script>
   <script src="js/characters.js"></script>
   <script src="js/stages.js"></script>
   <script src="js/weeks.js"></script>
+  <script src="js/psych-scripts.js"></script>
+  <script src="js/codename.js"></script>
+  <script src="js/codename-hx.js"></script>
   <script src="js/converter.js"></script>
   <script src="js/app.js"></script>
 </body>

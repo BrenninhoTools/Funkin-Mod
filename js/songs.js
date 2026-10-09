@@ -145,10 +145,10 @@
    * Converts one chart (one difficulty).
    * @returns {{notes:Array, events:Array, timeChanges:Array, stats:Object}}
    */
-  function convertChart(song, extraEvents) {
+  function convertChart(song, extraEvents, passEvents) {
     const sections = Array.isArray(song.notes) ? song.notes : [];
     const timing = mapTiming(song);
-    const stats = { gfSing: 0, customKinds: new Set(), unsupported: new Map(), gfSections: 0, noteCount: 0 };
+    const stats = { gfSing: 0, customKinds: new Set(), unsupported: new Map(), passed: new Map(), gfSections: 0, noteCount: 0 };
     const notes = [];
     const rawEvents = collectRawEvents(song, extraEvents);
 
@@ -201,7 +201,11 @@
       }
       const converted = convertEvent(ev.name, ev.v1, ev.v2, r3(ev.t), timing.timeChanges);
       if (converted) events.push(...converted);
-      else stats.unsupported.set(ev.name, (stats.unsupported.get(ev.name) || 0) + 1);
+      else if (passEvents && (passEvents.all || passEvents.names.has(ev.name))) {
+        // Handled by a converted script (onEvent / custom event): keep it as a pass-through event.
+        events.push({ t: r3(ev.t), e: ev.name, v: { value1: ev.v1 == null ? '' : String(ev.v1), value2: ev.v2 == null ? '' : String(ev.v2) } });
+        stats.passed.set(ev.name, (stats.passed.get(ev.name) || 0) + 1);
+      } else stats.unsupported.set(ev.name, (stats.unsupported.get(ev.name) || 0) + 1);
     }
 
     // Psych ignores section camera changes while the camera is forced to a position.
@@ -317,7 +321,7 @@
         const json = await fs.json(ch.path);
         const song = unwrapSong(json);
         if (!song || !Array.isArray(song.notes)) throw new Error('unrecognized chart format');
-        results.push({ diff: ch.diff, song, conv: convertChart(song, extraEvents) });
+        results.push({ diff: ch.diff, song, conv: convertChart(song, extraEvents, ctx.passEvents) });
       } catch (e) {
         report.error('Song "' + folder + '" (' + ch.diff + '): ' + e.message);
       }
